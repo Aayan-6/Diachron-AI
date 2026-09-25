@@ -71,7 +71,7 @@ def fetch_aoi_sentinel2(
     Returns:
         Tuple of (saved_geotiff_path, metadata_dict)
     """
-    out_dir = output_dir or FETCHED_DIR
+    out_dir = Path(output_dir) if output_dir else FETCHED_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     
     clean_id = item.id.replace("/", "_")
@@ -177,7 +177,7 @@ def fetch_aoi_sentinel1(
     Returns:
         Tuple of (saved_geotiff_path, metadata_dict)
     """
-    out_dir = output_dir or FETCHED_DIR
+    out_dir = Path(output_dir) if output_dir else FETCHED_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
     clean_id = item.id.replace("/", "_")
