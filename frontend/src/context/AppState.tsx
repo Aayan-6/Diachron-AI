@@ -263,12 +263,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     check();
-    const interval = setInterval(check, 30000);
+    const interval = setInterval(check, backendPhase === 'offline' ? 5000 : 30000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [healthNonce]);
+  }, [healthNonce, backendPhase]);
 
   const refreshBackend = useCallback(() => {
     setBackendPhase('checking');

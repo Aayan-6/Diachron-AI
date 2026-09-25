@@ -175,7 +175,7 @@ export interface SystemStatusResponse {
 }
 
 export function fetchSystemStatus(options?: RequestOptions): Promise<SystemStatusResponse> {
-  return request<SystemStatusResponse>('/status', { method: 'GET' }, { timeoutMs: 6000, ...options });
+  return request<SystemStatusResponse>('/status', { method: 'GET' }, { timeoutMs: 15000, ...options });
 }
 
 /** Human-readable name of whatever hardware is actually serving inference. */

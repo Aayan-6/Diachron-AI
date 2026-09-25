@@ -6,6 +6,7 @@ Cloud Optimized GeoTIFFs, and serving Web Mercator overlays to MapLibre GL.
 
 import os
 import sys
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
@@ -130,7 +131,8 @@ async def fetch_satellite_aoi(req: FetchAOIRequest):
 
     # Call Phase 1 engine with output directory set to backend/temp_uploads/
     try:
-        res = fetch_scene(
+        res = await asyncio.to_thread(
+            fetch_scene,
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
@@ -272,7 +274,8 @@ async def fetch_bitemporal_satellite_aoi(req: FetchBiTemporalAOIRequest):
 
     # 2. Fetch T1 scene (exact same AOI)
     try:
-        res_t1 = fetch_scene(
+        res_t1 = await asyncio.to_thread(
+            fetch_scene,
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
@@ -294,7 +297,8 @@ async def fetch_bitemporal_satellite_aoi(req: FetchBiTemporalAOIRequest):
 
     # 3. Fetch T2 scene (exact same AOI)
     try:
-        res_t2 = fetch_scene(
+        res_t2 = await asyncio.to_thread(
+            fetch_scene,
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
