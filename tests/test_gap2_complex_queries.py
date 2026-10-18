@@ -14,8 +14,7 @@ import os
 from pathlib import Path
 import numpy as np
 
-# Ensure backend path is on sys.path
-backend_root = Path(r"c:\Games\PS2\backend\SatQuery-master\backend")
+backend_root = Path(__file__).resolve().parents[1] / "backend" / "SatQuery-master" / "backend"
 sys.path.insert(0, str(backend_root))
 
 from services import complex_query_service, archive_indexer, embedding_service

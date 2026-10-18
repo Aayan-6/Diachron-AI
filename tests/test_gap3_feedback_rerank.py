@@ -17,8 +17,7 @@ import numpy as np
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# Ensure backend path is on sys.path
-backend_root = Path(r"c:\Games\PS2\backend\SatQuery-master\backend")
+backend_root = Path(__file__).resolve().parents[1] / "backend" / "SatQuery-master" / "backend"
 sys.path.insert(0, str(backend_root))
 
 from services import feedback_rerank_service
