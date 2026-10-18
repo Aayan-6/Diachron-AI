@@ -197,3 +197,10 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Pitch Decks & Submission Documentation
+*.pptx
+DEMO_VIDEO_RECORDING_SCRIPT.md
+REPRODUCIBLE_EVALUATION_REPORT.md
+SIH2026_SUBMISSION_PARAMETERS.md
+
+
