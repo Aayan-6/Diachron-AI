@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronsLeft, ChevronsRight, ClipboardCheck, Images, Map as MapIcon, Terminal } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, ClipboardCheck, Globe, Images, Map as MapIcon, Terminal } from 'lucide-react';
 import MapViewport from '../map/MapViewport';
 import { ScenePanel } from './ScenePanel';
 import { TracePanel } from './TracePanel';
 import { ReviewQueuePanel } from './ReviewQueuePanel';
+import { GroundTruthSentinelPanel } from '../tinyfish/GroundTruthSentinelPanel';
 import { Segmented } from '../ui/Segmented';
 import { IconButton } from '../ui/Button';
 import { useApp } from '../../context/AppState';
@@ -33,6 +34,7 @@ export const SceneDock: React.FC = () => {
     },
     { value: 'trace' as const, label: 'Trace', icon: <Terminal size={13} /> },
     { value: 'scene' as const, label: 'Scene', icon: <Images size={13} /> },
+    { value: 'sentinel' as const, label: 'Sentinel', icon: <Globe size={13} /> },
   ], [focusedCandidates]);
 
   const [width, setWidth] = useState<number>(() => {
@@ -182,6 +184,12 @@ export const SceneDock: React.FC = () => {
             <ScenePanel />
           </div>
         )}
+        {dockTab === 'sentinel' && (
+          <div className="absolute inset-0 flex flex-col bg-surface">
+            <GroundTruthSentinelPanel />
+          </div>
+        )}
+
       </div>
     </aside>
   );

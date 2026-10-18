@@ -67,6 +67,18 @@ if ENABLE_INTERACTIVE_MAP:
     except Exception as e:
         print(f"[Warning] Interactive Map router could not be loaded: {e}")
 
+# Feature: Autonomous Spatio-Temporal Ground-Truth Investigator (TinyFish Extension)
+try:
+    project_root = current_dir.parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from hackathon_addons.api.tinyfish_routes import router as tinyfish_router
+    app.include_router(tinyfish_router, prefix="/api/v1/tinyfish", tags=["TinyFish Ground-Truth Investigator"])
+    print("[TinyFish] Autonomous Spatio-Temporal Investigator module successfully mounted at /api/v1/tinyfish")
+except Exception as e:
+    print(f"[Info] TinyFish module not mounted: {e}")
+
+
 # Mount output directory for ChangeFormer / Change Detective masks, rasters, and GeoJSON files
 # Note: Mounted BEFORE /static so /static does not shadow /static/outputs
 candidate_output_dirs = [

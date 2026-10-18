@@ -123,7 +123,7 @@ export function presetToDataset(preset: ImageryPreset): SceneDataset {
 /* Context shape                                                               */
 /* -------------------------------------------------------------------------- */
 
-export type DockTab = 'map' | 'trace' | 'scene' | 'review';
+export type DockTab = 'map' | 'trace' | 'scene' | 'review' | 'sentinel';
 
 interface AppStateValue {
   /* backend */
