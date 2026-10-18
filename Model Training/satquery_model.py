@@ -80,21 +80,46 @@ class SatQueryVLM:
             os.path.exists(os.path.join(merged_dir, "model.safetensors.index.json"))
         ):
             print(f"[SatQuery VLM] Loading merged standalone weights from: {merged_dir}")
-            self.processor = AutoProcessor.from_pretrained(merged_dir)
-            self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                merged_dir,
-                torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
-                device_map="auto" if "cuda" in self.device else None
-            )
+            try:
+                # Try loading strictly from disk first (prevents any network blocking/timeout when offline)
+                self.processor = AutoProcessor.from_pretrained(merged_dir, local_files_only=True)
+                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    merged_dir,
+                    torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
+                    device_map="auto" if "cuda" in self.device else None,
+                    local_files_only=True
+                )
+            except Exception as e_local:
+                # If local_files_only encountered an issue, fallback to standard loader
+                print(f"[SatQuery VLM] local_files_only note ({e_local}); attempting standard load...")
+                self.processor = AutoProcessor.from_pretrained(merged_dir)
+                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    merged_dir,
+                    torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
+                    device_map="auto" if "cuda" in self.device else None
+                )
         else:
             print(f"[SatQuery VLM] Loading base model ({base_model_id}) + LoRA adapter ({lora_dir})...")
             proc_path = lora_dir if os.path.exists(lora_dir) else base_model_id
-            self.processor = AutoProcessor.from_pretrained(proc_path)
-            base_model = Qwen3VLForConditionalGeneration.from_pretrained(
-                base_model_id,
-                torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
-                device_map="auto" if "cuda" in self.device else None
-            )
+            try:
+                self.processor = AutoProcessor.from_pretrained(proc_path, local_files_only=True)
+            except Exception:
+                self.processor = AutoProcessor.from_pretrained(proc_path)
+
+            try:
+                base_model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    base_model_id,
+                    torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
+                    device_map="auto" if "cuda" in self.device else None,
+                    local_files_only=True
+                )
+            except Exception:
+                base_model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    base_model_id,
+                    torch_dtype=torch.bfloat16 if "cuda" in self.device else torch.float32,
+                    device_map="auto" if "cuda" in self.device else None
+                )
+
             if os.path.exists(lora_dir):
                 self.model = PeftModel.from_pretrained(base_model, lora_dir)
                 print("[SatQuery VLM] LoRA adapter attached successfully.")

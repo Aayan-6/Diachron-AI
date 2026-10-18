@@ -6,7 +6,6 @@ Cloud Optimized GeoTIFFs, and serving Web Mercator overlays to MapLibre GL.
 
 import os
 import sys
-import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
@@ -26,13 +25,14 @@ if WORKSPACE_ROOT and str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
 try:
-    from interactive_map import fetch_scene
+    from interactive_map import fetch_scene, fetch_temporal_stack
     from interactive_map.config import STAC_API_URL, MAX_AOI_AREA_SQ_KM
     from interactive_map.cog_reader import compute_bbox_area_km2
     MODULE_AVAILABLE = True
 except Exception as e:
     MODULE_AVAILABLE = False
     MODULE_ERROR = str(e)
+
 
 router = APIRouter()
 
@@ -90,6 +90,50 @@ class FetchBiTemporalAOIRequest(BaseModel):
     )
 
 
+class FetchTemporalStackRequest(BaseModel):
+    bbox: List[float] = Field(
+        ...,
+        description="[min_lon, min_lat, max_lon, max_lat] in WGS84 decimal degrees",
+        min_items=4,
+        max_items=4,
+    )
+    sensor: str = Field(
+        "sentinel-2",
+        description="'sentinel-2' (optical) or 'sentinel-1' (SAR radar)",
+    )
+    max_cloud_cover: int = Field(
+        20,
+        description="Maximum acceptable cloud coverage (0-100) for optical scenes",
+        ge=0,
+        le=100,
+    )
+    date_range: Optional[str] = Field(
+        None,
+        description="Optional ISO 8601 date interval, e.g. '2024-01-01T00:00:00Z/2026-09-01T00:00:00Z'",
+    )
+    start_date: Optional[str] = Field(
+        None,
+        description="Start date for temporal stack (e.g. '2024-01-01')",
+    )
+    end_date: Optional[str] = Field(
+        None,
+        description="End date for temporal stack (e.g. '2025-06-30')",
+    )
+    max_scenes: int = Field(
+        6,
+        description="Maximum number of temporal scenes to acquire (2 to 12)",
+        ge=2,
+        le=12,
+    )
+    min_interval_days: int = Field(
+        14,
+        description="Minimum days between consecutive temporal acquisitions",
+        ge=1,
+        le=180,
+    )
+
+
+
 @router.get("/health")
 def interactive_map_health():
     """Reports status of the STAC + COG satellite fetch engine."""
@@ -131,8 +175,7 @@ async def fetch_satellite_aoi(req: FetchAOIRequest):
 
     # Call Phase 1 engine with output directory set to backend/temp_uploads/
     try:
-        res = await asyncio.to_thread(
-            fetch_scene,
+        res = fetch_scene(
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
@@ -274,8 +317,7 @@ async def fetch_bitemporal_satellite_aoi(req: FetchBiTemporalAOIRequest):
 
     # 2. Fetch T1 scene (exact same AOI)
     try:
-        res_t1 = await asyncio.to_thread(
-            fetch_scene,
+        res_t1 = fetch_scene(
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
@@ -297,8 +339,7 @@ async def fetch_bitemporal_satellite_aoi(req: FetchBiTemporalAOIRequest):
 
     # 3. Fetch T2 scene (exact same AOI)
     try:
-        res_t2 = await asyncio.to_thread(
-            fetch_scene,
+        res_t2 = fetch_scene(
             bbox=req.bbox,
             sensor=req.sensor,
             max_cloud_cover=req.max_cloud_cover,
@@ -451,3 +492,109 @@ async def fetch_bitemporal_satellite_aoi(req: FetchBiTemporalAOIRequest):
             "Analyze SAR radar backscatter variations across these temporal passes."
         ]
     }
+
+
+@router.post("/fetch-temporal-stack")
+async def fetch_satellite_temporal_stack(req: FetchTemporalStackRequest):
+    """
+    Fetches an ordered multi-temporal stack of satellite imagery covering an AOI bounding box.
+    Returns chronologically ordered scenes (T0, T1, ..., Tk) ready for multi-temporal analysis.
+    """
+    import asyncio
+
+    if not MODULE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Interactive map streaming engine unavailable: {MODULE_ERROR}",
+        )
+
+    if req.bbox[0] >= req.bbox[2] or req.bbox[1] >= req.bbox[3]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid bounding box: min coordinates must be strictly less than max. Got {req.bbox}",
+        )
+
+    area_sq_km = compute_bbox_area_km2(req.bbox)
+    if area_sq_km > MAX_AOI_AREA_SQ_KM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested area ({area_sq_km:.1f} km²) exceeds maximum allowed cap of {MAX_AOI_AREA_SQ_KM} km².",
+        )
+
+    target_date_range = req.date_range
+    if not target_date_range and req.start_date and req.end_date:
+        target_date_range = f"{req.start_date}T00:00:00Z/{req.end_date}T23:59:59Z"
+
+    try:
+        stack_res = await asyncio.to_thread(
+            fetch_temporal_stack,
+            bbox=req.bbox,
+            sensor=req.sensor,
+            max_cloud_cover=req.max_cloud_cover,
+            date_range=target_date_range,
+            max_scenes=req.max_scenes,
+            min_interval_days=req.min_interval_days,
+            preprocess=True,
+            generate_png=True,
+            output_dir=TEMP_DIR,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Temporal stack acquisition failure: {exc}",
+        )
+
+    if stack_res.get("status") == "not_found" or not stack_res.get("scenes"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No suitable satellite scenes found for the selected AOI and criteria. Try widening the date range or increasing cloud cover.",
+        )
+
+    scenes = stack_res.get("scenes", [])
+    formatted_scenes = []
+    for s in scenes:
+        overlay_name = s.get("web_overlay_name") or Path(s["processed_geotiff_path"]).name
+        raw_p = Path(s["raw_geotiff_path"])
+        formatted_scenes.append({
+            "step_index": s.get("step_index", 0),
+            "scene_id": s.get("scene_id"),
+            "acquisition_date": s.get("acquisition_date"),
+            "cloud_cover": s.get("cloud_cover"),
+            "filename": raw_p.name,
+            "raw_geotiff_path": s.get("raw_geotiff_path"),
+            "processed_geotiff_path": s.get("processed_geotiff_path"),
+            "image_url": f"/static/{overlay_name}",
+            "crs": s.get("crs"),
+            "wgs84_bounds": s.get("wgs84_bounds"),
+        })
+
+    # Calculate date span
+    date_span_days = 0
+    if len(formatted_scenes) >= 2:
+        try:
+            d_start = datetime.fromisoformat(formatted_scenes[0]["acquisition_date"][:10])
+            d_end = datetime.fromisoformat(formatted_scenes[-1]["acquisition_date"][:10])
+            date_span_days = abs((d_end - d_start).days)
+        except Exception:
+            date_span_days = 0
+
+    is_optical = "sentinel-2" in req.sensor.lower()
+
+    return {
+        "status": "success",
+        "sensor": stack_res.get("sensor"),
+        "bbox": req.bbox,
+        "area_sq_km": stack_res.get("area_sq_km"),
+        "n_scenes": len(formatted_scenes),
+        "date_span_days": date_span_days,
+        "scenes": formatted_scenes,
+        "suggested_queries": [
+            "Analyze multi-temporal changes across this time series and identify when the earliest changes occurred.",
+            "Determine the earliest observation date for new construction and vegetation clearance in this area.",
+            "Track vegetation dynamics and water body changes across all acquisition dates.",
+        ] if is_optical else [
+            "Analyze SAR radar backscatter evolution across this temporal time series.",
+            "Track flood water extent changes across these radar passes.",
+        ],
+    }
+

@@ -10,11 +10,11 @@ export const Footer = () => {
             <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
               <Satellite size={18} className="text-accent-cyan" />
               <h3 className="text-base font-bold text-white tracking-tight">
-                SatQuery <span className="text-accent-cyan">AI</span>
+                Diachron <span className="text-accent-cyan">AI</span>
               </h3>
             </div>
             <p className="text-slate-400 max-w-md leading-relaxed">
-              Agentic vision-language assistant for satellite & SAR remote sensing image analysis.
+              Autonomous diachronic analysis and multi-temporal change intelligence for Earth observation satellite archives.
             </p>
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mt-2 text-[11px] font-mono text-slate-500">
               <span className="text-accent-teal">Smart India Hackathon 2026</span>

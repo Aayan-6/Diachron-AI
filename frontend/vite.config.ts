@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const BACKEND = process.env.SATQUERY_BACKEND ?? 'http://127.0.0.1:8000';
+const BACKEND = process.env.DIACHRON_BACKEND ?? process.env.SATQUERY_BACKEND ?? 'http://127.0.0.1:8000';
 
 // https://vite.dev/config/
 export default defineConfig({

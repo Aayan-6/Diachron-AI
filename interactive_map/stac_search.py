@@ -16,9 +16,19 @@ from .config import (
 )
 
 
-def get_stac_client() -> pystac_client.Client:
-    """Returns an open pystac Client connected to the Earth Search endpoint."""
-    return pystac_client.Client.open(STAC_API_URL)
+def get_stac_client() -> Optional[pystac_client.Client]:
+    """Returns an open pystac Client connected to the Earth Search endpoint, or None if offline."""
+    try:
+        # Check fast offline status if available
+        try:
+            from core import network_state
+            if not network_state.is_online():
+                return None
+        except Exception:
+            pass
+        return pystac_client.Client.open(STAC_API_URL, timeout=3.5)
+    except Exception:
+        return None
 
 
 def _format_date_range(date_range: Optional[str] = None, days: int = DEFAULT_SEARCH_DAYS) -> str:
@@ -49,6 +59,8 @@ def search_sentinel2(
         List of matching pystac.Item instances sorted by acquisition date (newest first).
     """
     client = get_stac_client()
+    if client is None:
+        return []
     dt = _format_date_range(date_range)
     
     # Try primary collection first, fallback to alternate if empty
@@ -60,21 +72,26 @@ def search_sentinel2(
             "query": {"eo:cloud_cover": {"lte": max_cloud_cover}},
             "max_items": limit
         }
-        
-        search = client.search(**query_params)
-        items = list(search.item_collection())
-        if items:
-            items.sort(key=lambda x: x.datetime or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-            return items
+        try:
+            search = client.search(**query_params)
+            items = list(search.item_collection())
+            if items:
+                items.sort(key=lambda x: x.datetime or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                return items
+        except Exception:
+            pass
 
     # If strict cloud cover returned nothing, retry with relaxed cloud filter (up to 50%)
     if max_cloud_cover < 50:
         query_params["query"] = {"eo:cloud_cover": {"lte": 50}}
-        search = client.search(**query_params)
-        items = list(search.item_collection())
-        if items:
-            items.sort(key=lambda x: x.datetime or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-            return items
+        try:
+            search = client.search(**query_params)
+            items = list(search.item_collection())
+            if items:
+                items.sort(key=lambda x: x.datetime or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                return items
+        except Exception:
+            pass
 
     return []
 
@@ -96,6 +113,8 @@ def search_sentinel1(
         List of matching pystac.Item instances sorted by acquisition date.
     """
     client = get_stac_client()
+    if client is None:
+        return []
     # Sentinel-1 has a 12-day revisit; look back up to 120 days if not specified
     dt = _format_date_range(date_range, days=120)
     

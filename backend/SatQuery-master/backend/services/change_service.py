@@ -1924,7 +1924,7 @@ def _transform_geojson_to_wgs84(
     ) -> Any:
 
         if (
-            isinstance(value, list)
+            isinstance(value, (list, tuple))
             and value
             and isinstance(
                 value[0],
@@ -1935,7 +1935,7 @@ def _transform_geojson_to_wgs84(
                 value
             )
 
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [
                 transform_nested(item)
                 for item in value
@@ -4917,16 +4917,29 @@ async def run_inference(
         f"T2='{os.path.basename(file_paths[1]) if len(file_paths) > 1 else 'none'}'"
     )
 
-    if len(file_paths) != 2:
+    if len(file_paths) > 2:
+        tracer.append_log(
+            f"Change Detective delegating {len(file_paths)} temporal scenes to Multi-Temporal Change Engine"
+        )
+        try:
+            from services import multi_temporal_service
+            res = await multi_temporal_service.run_inference(query, file_paths, tracer)
+            return res[0], res[1]
+        except Exception as mt_err:
+            tracer.append_log(f"Multi-temporal delegation failed: {mt_err}")
+            return f"Multi-temporal analysis error: {mt_err}", []
+
+    if len(file_paths) < 2:
         return (
-            "Bi-temporal change detection requires exactly two "
-            "spatially corresponding images: a before image and an after image.",
+            "Change analysis requires at least two spatially corresponding satellite images "
+            "(a baseline image and an observation image, or a multi-temporal time series).",
             [],
         )
 
     tracer.append_log(
-        f"Change Detective received exactly two temporal inputs: T1='{os.path.basename(file_paths[0])}', T2='{os.path.basename(file_paths[1])}'"
+        f"Change Detective received bi-temporal inputs: T1='{os.path.basename(file_paths[0])}', T2='{os.path.basename(file_paths[1])}'"
     )
+
 
     try:
 

@@ -69,13 +69,13 @@ export const Hero: React.FC = () => {
           </div>
 
           <h1 className="mb-5 text-5xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl md:text-7xl">
-            SatQuery <span className="text-accent text-glow">AI</span>
+            Diachron <span className="text-accent text-glow">AI</span>
           </h1>
 
           <p className="mx-auto mb-9 max-w-xl text-base leading-relaxed text-ink-muted sm:text-lg">
-            Ask questions about satellite and SAR imagery in plain language. An
-            agentic controller routes each one to the right specialist and puts
-            its evidence on the map beside the answer.
+            Semantic retrieval and multi-temporal change intelligence for satellite archives.
+            Search by open-vocabulary natural language, pinpoint earliest observation onset dates,
+            and inspect verified change polygons on the interactive map.
           </p>
 
           <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">

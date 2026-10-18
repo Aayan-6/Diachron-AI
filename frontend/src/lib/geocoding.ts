@@ -1,5 +1,5 @@
 /**
- * SatQuery Geocoding & Geographic Search Service
+ * Diachron AI Geocoding & Geographic Search Service
  * Supports worldwide cities, states, countries, landmarks, and raw coordinates.
  * Dynamically scales zoom level based on place hierarchy:
  *   - City: Zoom 12.0 - 13.5 (high-detail urban street grid)

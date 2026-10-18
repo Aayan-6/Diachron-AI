@@ -4,7 +4,10 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   ArrowLeftRight,
   Building2,
+  Calendar,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   Crop,
   Crosshair,
@@ -23,13 +26,15 @@ import {
   Pause,
   Play,
   Search,
+  Sparkles,
   X,
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
 import { IconButton } from '../ui/Button';
 import { useApp } from '../../context/AppState';
-import type { ImageOverlayEvidence, SceneOverlay } from '../../lib/types';
+import { resolveAssetUrl } from '../../lib/api';
+import type { ImageOverlayEvidence, SceneOverlay, SceneDataset, TimelineObservation } from '../../lib/types';
 import {
   searchLocations,
   parseCoordinates,
@@ -38,6 +43,7 @@ import {
 import { AOIBoxSelector } from './aoi/AOIBoxSelector';
 import { AOIFetchModal } from './aoi/AOIFetchModal';
 import { AOIChatbotHandoff } from './aoi/AOIChatbotHandoff';
+import { ArchiveSearchModal } from '../archive/ArchiveSearchModal';
 import {
   type FetchAOIResponse,
   type FetchBiTemporalAOIResponse,
@@ -178,6 +184,48 @@ const DARK_TACTICAL_STYLE: any = {
   ]
 };
 
+// 100% Zero-Network Air-Gapped Tactical Basemap (Graticule Grid & Dark Blueprint Canvas)
+const TACTICAL_OFFLINE_STYLE: any = {
+  version: 8,
+  sources: {
+    'tactical-graticule': {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: [
+          ...Array.from({ length: 37 }, (_, i) => -180 + i * 10).map((lng) => ({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [[lng, -85], [lng, 85]] },
+            properties: { type: 'meridian' }
+          })),
+          ...Array.from({ length: 17 }, (_, i) => -80 + i * 10).map((lat) => ({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [[-180, lat], [180, lat]] },
+            properties: { type: 'parallel' }
+          }))
+        ]
+      }
+    }
+  },
+  layers: [
+    {
+      id: 'tactical-bg',
+      type: 'background',
+      paint: { 'background-color': '#060B13' }
+    },
+    {
+      id: 'tactical-graticule-lines',
+      type: 'line',
+      source: 'tactical-graticule',
+      paint: {
+        'line-color': '#112233',
+        'line-width': 1,
+        'line-dasharray': [2, 3]
+      }
+    }
+  ]
+};
+
 // Preset bookmarks for instant exploration
 const PRESET_BOOKMARKS = [
   { name: 'India (Subcontinent)', coords: [78.9629, 20.5937] as [number, number], zoom: 4.8 },
@@ -190,7 +238,7 @@ const PRESET_BOOKMARKS = [
   { name: 'Global Earth View', coords: [15.0, 25.0] as [number, number], zoom: 2.2 },
 ];
 
-export type BaseLayerType = 'satellite' | 'hybrid' | 'streets' | 'sar';
+export type BaseLayerType = 'satellite' | 'hybrid' | 'streets' | 'sar' | 'tactical-offline';
 export type BandFilterType = 'true-color' | 'false-color-nir' | 'sar-contrast' | 'edge-boost';
 export type TemporalModeType = 'swipe' | 'fade' | 't1' | 't2';
 
@@ -222,7 +270,8 @@ const BASE_LAYERS: Array<{ value: BaseLayerType; label: string }> = [
   { value: 'satellite', label: 'Satellite' },
   { value: 'hybrid', label: 'Hybrid' },
   { value: 'streets', label: 'Streets' },
-  { value: 'sar', label: 'SAR dark' }
+  { value: 'sar', label: 'SAR dark' },
+  { value: 'tactical-offline', label: 'Tactical (Air-Gapped)' }
 ];
 
 const BAND_PRESETS: Array<{ value: BandFilterType; label: string }> = [
@@ -286,8 +335,28 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   resultOverlay = null,
   density = 'full'
 }) => {
-  const { overlay: contextOverlay, setScene, sendQuery, openDock } = useApp();
+  const {
+    overlay: contextOverlay,
+    setScene,
+    sendQuery,
+    openDock,
+    activeTimelineStep,
+    setActiveTimelineStep,
+    focusedTimeline,
+    activeSiteId,
+    setActiveSiteId,
+    analystReviews,
+    focusedCandidateId,
+    setFocusedCandidateId,
+  } = useApp();
   const activeOverlay = propOverlay !== undefined ? propOverlay : contextOverlay;
+
+  const analystReviewsRef = useRef(analystReviews);
+  analystReviewsRef.current = analystReviews;
+  const setFocusedCandidateIdRef = useRef(setFocusedCandidateId);
+  setFocusedCandidateIdRef.current = setFocusedCandidateId;
+  const prevGeoJsonDataRef = useRef<any>(null);
+  const activeDetectionFeaturesRef = useRef<any[]>([]);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -344,6 +413,20 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       activeOverlay.bandContract?.capabilities?.joint_false_color_nir
     );
 
+    if (activeOverlay.mode === 'multi-temporal') {
+      const activeIdx = Math.min(Math.max(0, activeTimelineStep), (activeOverlay.scenes?.length || 1) - 1);
+      const activeScene = activeOverlay.scenes?.[activeIdx];
+      const hasNir = Boolean(activeScene?.nirImageUrl || activeOverlay.t1NirImageUrl);
+      return {
+        available: hasNir,
+        reason: hasNir ? 'Available (NIR band detected for active observation)' : 'Unavailable: NIR band absent in active observation',
+        t1Available: hasNir,
+        t2Available: false,
+        jointAvailable: false,
+        asymmetricNote: undefined as string | undefined,
+      };
+    }
+
     if (activeOverlay.mode === 'single') {
       return {
         available: t1HasNir,
@@ -393,7 +476,66 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       jointAvailable,
       asymmetricNote: t1HasNir && !t2HasNir ? 'Bi-temporal comparison note: T2 lacks NIR band' : undefined,
     };
-  }, [activeOverlay, temporalMode]);
+  }, [activeOverlay, temporalMode, activeTimelineStep]);
+
+  // Derived multi-temporal timeline for timeline slider widget
+  const timelineData: TimelineObservation[] | null = useMemo(() => {
+    if (focusedTimeline && focusedTimeline.length > 1) {
+      return focusedTimeline;
+    }
+    if (activeOverlay?.scenes && activeOverlay.scenes.length > 1) {
+      return activeOverlay.scenes.map((s, idx) => ({
+        step: idx,
+        step_index: idx,
+        date: s.date || s.acquisition_date || s.filename || `T${idx + 1}`,
+        filename: s.filename,
+        image_url: s.image_url || (s as any).imageUrl || null,
+        imageUrl: s.image_url || (s as any).imageUrl || null,
+        is_baseline: idx === 0,
+        change_area_ha: 0,
+        change_fraction: 0,
+        n_polygons: 0,
+      }));
+    }
+    return null;
+  }, [focusedTimeline, activeOverlay]);
+
+  // Multi-temporal identification & auto-playback controls
+  const isMultiTemporal = Boolean(
+    activeOverlay?.mode === 'multi-temporal' ||
+    (timelineData && timelineData.length > 1 && activeOverlay?.mode !== 'bi-temporal')
+  );
+
+  const [isPlayingTimeline, setIsPlayingTimeline] = useState<boolean>(false);
+  const activeTimelineStepRef = useRef(activeTimelineStep);
+  useEffect(() => {
+    activeTimelineStepRef.current = activeTimelineStep;
+  }, [activeTimelineStep]);
+
+  // Auto-advance timeline during playback
+  useEffect(() => {
+    if (!isPlayingTimeline || !timelineData || timelineData.length <= 1) return;
+
+    const interval = setInterval(() => {
+      setActiveTimelineStep((activeTimelineStepRef.current + 1) % timelineData.length);
+    }, 1600);
+
+    return () => clearInterval(interval);
+  }, [isPlayingTimeline, timelineData, setActiveTimelineStep]);
+
+  // Stop playback when overlay dataset changes
+  useEffect(() => {
+    setIsPlayingTimeline(false);
+  }, [activeOverlay?.datasetId]);
+
+  const currentStep = Math.min(Math.max(0, activeTimelineStep), (timelineData?.length || 1) - 1);
+  const activeObs = timelineData?.[currentStep] || timelineData?.[0];
+  const isBaseline = Boolean(activeObs?.is_baseline || currentStep === 0);
+
+  const handleTimelineStepChange = (newStep: number) => {
+    setIsPlayingTimeline(false);
+    setActiveTimelineStep(newStep);
+  };
 
   // When temporal display mode changes to T2, if T2 lacks NIR, safely fallback to true-colour
   useEffect(() => {
@@ -424,6 +566,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   const [selectedBbox, setSelectedBbox] = useState<[number, number, number, number] | null>(null);
   const [selectedAreaKm2, setSelectedAreaKm2] = useState<number>(0);
   const [showFetchModal, setShowFetchModal] = useState<boolean>(false);
+  const [showArchiveModal, setShowArchiveModal] = useState<boolean>(false);
   const [fetchedScene, setFetchedScene] = useState<FetchAOIResponse | FetchBiTemporalAOIResponse | null>(null);
 
   // Auto-switch basemap if SAR sensor is provided
@@ -533,10 +676,10 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   ) => {
     if (!ov || !ov.bounds || ov.bounds.length < 4) {
       // Clean up all overlay layers and sources safely
-      ['sentinel-raster-layer-t2', 'sentinel-raster-layer-t1', 'sentinel-bbox-glow', 'sentinel-bbox-line'].forEach((id) => {
+      ['sentinel-raster-layer-t2', 'sentinel-raster-layer-t1', 'sentinel-bbox-glow', 'sentinel-bbox-line', 'spatial-sites-active-line', 'spatial-sites-line', 'spatial-sites-fill'].forEach((id) => {
         if (map.getLayer(id)) map.removeLayer(id);
       });
-      ['sentinel-raster-t2', 'sentinel-raster-t1', 'sentinel-bbox-source'].forEach((id) => {
+      ['sentinel-raster-t2', 'sentinel-raster-t1', 'sentinel-bbox-source', 'spatial-sites-source'].forEach((id) => {
         if (map.getSource(id)) map.removeSource(id);
       });
       return;
@@ -545,7 +688,15 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     const isVisible = visible && opacity > 0.01;
     const visibilityVal = isVisible ? 'visible' : 'none';
 
-    const [minLng, minLat, maxLng, maxLat] = ov.bounds;
+    let [minLng, minLat, maxLng, maxLat] = ov.bounds;
+    if (ov.mode === 'multi-temporal' && ov.scenes && ov.scenes.length > 0) {
+      const activeIdx = Math.min(Math.max(0, activeTimelineStep), ov.scenes.length - 1);
+      const activeScene = ov.scenes[activeIdx];
+      const scBounds = (activeScene as any)?.wgs84_bounds;
+      if (scBounds && Array.isArray(scBounds) && scBounds.length === 4) {
+        [minLng, minLat, maxLng, maxLat] = scBounds;
+      }
+    }
     const imageCoordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [minLng, maxLat], // Top-Left
       [maxLng, maxLat], // Top-Right
@@ -577,7 +728,16 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
     // Check NIR capabilities for genuine raster selection
     const isT1Nir = filterPreset === 'false-color-nir' && Boolean(ov.bandContract?.t1?.can_false_color_nir || ov.t1NirImageUrl);
-    const targetT1Url = (isT1Nir && ov.t1NirImageUrl) ? ov.t1NirImageUrl : ov.t1ImageUrl;
+    let targetT1Url = (isT1Nir && ov.t1NirImageUrl) ? ov.t1NirImageUrl : ov.t1ImageUrl;
+    if (ov.mode === 'multi-temporal' && ov.scenes && ov.scenes.length > 0) {
+      const activeIdx = Math.min(Math.max(0, activeTimelineStep), ov.scenes.length - 1);
+      const activeScene = ov.scenes[activeIdx];
+      if (activeScene) {
+        const sceneUrl = activeScene.imageUrl || activeScene.image_url || ov.t1ImageUrl;
+        const nirUrl = activeScene.nirImageUrl || activeScene.nir_image_url || ov.t1NirImageUrl;
+        targetT1Url = (filterPreset === 'false-color-nir' && nirUrl) ? nirUrl : sceneUrl;
+      }
+    }
 
     const isT2Nir = filterPreset === 'false-color-nir' && Boolean(ov.bandContract?.t2?.can_false_color_nir || ov.t2NirImageUrl);
     const targetT2Url = (isT2Nir && ov.t2NirImageUrl) ? ov.t2NirImageUrl : (ov.t2ImageUrl || '');
@@ -744,10 +904,101 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           }
         });
       }
+
+      // Draw all discovered spatial site footprints if multiple exist
+      if (ov.sites && ov.sites.length > 1) {
+        const sitesGeoJson = {
+          type: 'FeatureCollection',
+          features: ov.sites.map((st) => {
+            const [sMinLng, sMinLat, sMaxLng, sMaxLat] = st.bounds;
+            const isCurrentActive = activeSiteId ? st.site_id === activeSiteId : st.site_id === ov.sites![0].site_id;
+            return {
+              type: 'Feature',
+              properties: {
+                site_id: st.site_id,
+                name: st.name,
+                scene_count: st.scene_count,
+                date_range: st.date_range,
+                isActive: isCurrentActive,
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [sMinLng, sMinLat],
+                    [sMaxLng, sMinLat],
+                    [sMaxLng, sMaxLat],
+                    [sMinLng, sMaxLat],
+                    [sMinLng, sMinLat]
+                  ]
+                ]
+              }
+            };
+          })
+        };
+
+        const existingSitesSource = map.getSource('spatial-sites-source') as maplibregl.GeoJSONSource | undefined;
+        if (existingSitesSource && typeof existingSitesSource.setData === 'function') {
+          existingSitesSource.setData(sitesGeoJson as any);
+        } else {
+          ['spatial-sites-active-line', 'spatial-sites-line', 'spatial-sites-fill'].forEach((id) => {
+            if (map.getLayer(id)) map.removeLayer(id);
+          });
+          if (map.getSource('spatial-sites-source')) map.removeSource('spatial-sites-source');
+
+          map.addSource('spatial-sites-source', {
+            type: 'geojson',
+            data: sitesGeoJson as any
+          });
+
+          // Interactive fill for click detection
+          map.addLayer({
+            id: 'spatial-sites-fill',
+            type: 'fill',
+            source: 'spatial-sites-source',
+            paint: {
+              'fill-color': '#00f2ff',
+              'fill-opacity': ['case', ['get', 'isActive'], 0.04, 0.09]
+            }
+          });
+
+          // Inactive dashed border
+          map.addLayer({
+            id: 'spatial-sites-line',
+            type: 'line',
+            source: 'spatial-sites-source',
+            filter: ['!', ['get', 'isActive']],
+            paint: {
+              'line-color': '#00f2ff',
+              'line-width': 1.8,
+              'line-dasharray': [3, 2],
+              'line-opacity': 0.75
+            }
+          });
+
+          // Active glowing border
+          map.addLayer({
+            id: 'spatial-sites-active-line',
+            type: 'line',
+            source: 'spatial-sites-source',
+            filter: ['get', 'isActive'],
+            paint: {
+              'line-color': '#00f2ff',
+              'line-width': 3,
+              'line-opacity': 0.95
+            }
+          });
+        }
+      } else {
+        ['spatial-sites-active-line', 'spatial-sites-line', 'spatial-sites-fill'].forEach((id) => {
+          if (map.getLayer(id)) map.removeLayer(id);
+        });
+        if (map.getSource('spatial-sites-source')) map.removeSource('spatial-sites-source');
+      }
     } catch (err) {
       console.warn('Sentinel bbox add notice:', err);
     }
-  }, []);
+  }, [activeTimelineStep, activeSiteId]);
 
   // Ensure AI visual grounding detection source & layers exist
   const ensureDetectionLayers = useCallback((map: maplibregl.Map, data: any) => {
@@ -821,15 +1072,25 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         source: 'satquery-detections',
         paint: {
           'fill-color': [
-            'coalesce',
-            ['get', 'fillColor'],
-            ['get', 'color'],
-            '#00f2ff'
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            '#00f2ff',
+            [
+              'coalesce',
+              ['get', 'fillColor'],
+              ['get', 'color'],
+              '#f59e0b'
+            ]
           ],
           'fill-opacity': [
-            'coalesce',
-            ['get', 'fillOpacity'],
-            0.28
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            0.38,
+            [
+              'coalesce',
+              ['get', 'fillOpacity'],
+              0.22
+            ]
           ]
         }
       });
@@ -841,14 +1102,29 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         source: 'satquery-detections',
         paint: {
           'line-color': [
-            'coalesce',
-            ['get', 'strokeColor'],
-            ['get', 'color'],
-            '#00f2ff'
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            '#00f2ff',
+            [
+              'coalesce',
+              ['get', 'strokeColor'],
+              ['get', 'color'],
+              '#f59e0b'
+            ]
           ],
-          'line-width': 7,
+          'line-width': [
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            8,
+            4
+          ],
           'line-blur': 4,
-          'line-opacity': 0.75
+          'line-opacity': [
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            0.85,
+            0.45
+          ]
         }
       });
 
@@ -859,12 +1135,22 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         source: 'satquery-detections',
         paint: {
           'line-color': [
-            'coalesce',
-            ['get', 'strokeColor'],
-            ['get', 'color'],
-            '#00f2ff'
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            '#00f2ff',
+            [
+              'coalesce',
+              ['get', 'strokeColor'],
+              ['get', 'color'],
+              '#d97706'
+            ]
           ],
-          'line-width': 2.5,
+          'line-width': [
+            'case',
+            ['boolean', ['get', 'query_matched'], false],
+            3.0,
+            1.8
+          ],
           'line-opacity': 0.95
         }
       });
@@ -874,20 +1160,53 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         if (!e.features || e.features.length === 0) return;
         const feat = e.features[0];
         const props = (feat.properties as any) || {};
-        const label = props.label || 'Detected Region';
+        const featId = props.id || (feat.id !== undefined ? String(feat.id) : '');
+        if (featId && setFocusedCandidateIdRef.current) {
+          setFocusedCandidateIdRef.current(featId);
+        }
+
+        const review = analystReviewsRef.current[featId];
+        const verdict = review?.verdict || props.analystVerdict || 'pending';
+        const label = props.label || `Candidate #${featId || '1'}`;
         const areaHa = props.area_ha ? `${parseFloat(props.area_ha).toFixed(2)} ha` : null;
         const areaM2 = props.area_m2 ? `${parseFloat(props.area_m2).toLocaleString()} m²` : null;
-        const typeStr = props.type || 'Detection';
-        const color = props.strokeColor || props.color || '#00f2ff';
+        const typeStr = props.change_type || props.type || 'Detection';
+        const confidence = props.confidence ? `${Math.round(props.confidence * 100)}%` : null;
+        const isQueryMatched = Boolean(props.query_matched);
+        const relPercent = props.semantic_relevance ? `${Math.round(props.semantic_relevance * 100)}%` : null;
+        const groundingReason = props.grounding_reason || '';
+        const color = isQueryMatched ? '#00f2ff' : (props.strokeColor || props.color || '#f59e0b');
+
+        const verdictBadgeColor =
+          verdict === 'confirmed' ? '#10b981' :
+          verdict === 'rejected' ? '#64748b' :
+          verdict === 'flagged' ? '#f59e0b' : '#00f2ff';
+
+        const targetBadgeHtml = isQueryMatched
+          ? `<span style="background: rgba(0,242,255,0.15); color: #00f2ff; border: 1px solid rgba(0,242,255,0.5); padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase;">🎯 TARGET ${relPercent ? `(${relPercent})` : ''}</span>`
+          : '';
+
+        const groundingReasonHtml = groundingReason
+          ? `<div style="font-size: 9.5px; color: #38bdf8; margin-top: 5px; padding: 4px 6px; background: rgba(0,242,255,0.06); border-radius: 4px; border-left: 2px solid #00f2ff;"><strong>Grounding:</strong> <em>${groundingReason}</em></div>`
+          : '';
 
         new maplibregl.Popup({ closeButton: true, closeOnClick: true, className: 'satquery-detection-popup' })
           .setLngLat(e.lngLat)
           .setHTML(`
-            <div style="padding: 8px; font-family: monospace; font-size: 11px; color: #f1f5f9; background: #0b0f19; border-radius: 6px; border: 1px solid ${color}; box-shadow: 0 0 15px rgba(0,0,0,0.8);">
-              <div style="font-weight: 700; color: ${color}; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">${label}</div>
-              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 4px;">Classification: <strong>${typeStr}</strong></div>
-              ${areaHa ? `<div style="font-size: 10px; color: #cbd5e1;">Area: <strong>${areaHa}</strong> (${areaM2})</div>` : ''}
-              <div style="font-size: 9px; color: #64748b; margin-top: 4px;">Center: ${e.lngLat.lat.toFixed(4)}°N, ${e.lngLat.lng.toFixed(4)}°E</div>
+            <div style="padding: 10px; font-family: monospace; font-size: 11px; color: #f1f5f9; background: #0b0f19; border-radius: 8px; border: 1px solid ${isQueryMatched ? '#00f2ff' : verdictBadgeColor}; box-shadow: 0 0 20px rgba(0,0,0,0.9); min-width: 200px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px;">
+                <span style="font-weight: 700; color: ${color}; text-transform: uppercase; letter-spacing: 0.5px;">${label}</span>
+                <div style="display: flex; gap: 4px; align-items: center;">
+                  ${targetBadgeHtml}
+                  <span style="background: ${verdictBadgeColor}22; color: ${verdictBadgeColor}; border: 1px solid ${verdictBadgeColor}88; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase;">${verdict}</span>
+                </div>
+              </div>
+              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 3px;">Classification: <strong style="color:#e2e8f0;">${typeStr}</strong></div>
+              ${confidence ? `<div style="font-size: 10px; color: #94a3b8; margin-bottom: 3px;">Confidence: <strong style="color:#38bdf8;">${confidence}</strong></div>` : ''}
+              ${areaHa ? `<div style="font-size: 10px; color: #cbd5e1; margin-bottom: 3px;">Area: <strong>${areaHa}</strong> (${areaM2})</div>` : ''}
+              ${groundingReasonHtml}
+              ${review?.notes ? `<div style="font-size: 10px; color: #f59e0b; margin-top: 5px; padding-top: 4px; border-top: 1px solid #334155;">Note: <em>${review.notes}</em></div>` : ''}
+              <div style="font-size: 9px; color: #64748b; margin-top: 6px;">Position: ${e.lngLat.lat.toFixed(4)}°N, ${e.lngLat.lng.toFixed(4)}°E</div>
             </div>
           `)
           .addTo(map);
@@ -976,6 +1295,23 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       }
 
       ensureDetectionLayers(map, null);
+
+      // Register spatial site footprint click and hover listeners
+      map.on('click', 'spatial-sites-fill', (e) => {
+        if (e.features && e.features.length > 0) {
+          const clickedSiteId = e.features[0].properties?.site_id;
+          if (clickedSiteId) {
+            setActiveSiteId(clickedSiteId);
+          }
+        }
+      });
+      map.on('mouseenter', 'spatial-sites-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'spatial-sites-fill', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
       if (activeOverlay) {
         updateOverlayLayers(map, activeOverlay, overlayOpacity, temporalMode, temporalSlider, isOverlayVisible, bandPreset);
       }
@@ -1024,7 +1360,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       );
 
       setDetectionLabel(
-        `${activeOverlay.name} [${activeOverlay.mode === 'bi-temporal' ? 'Bi-Temporal Pair' : 'Single Scene'}]`
+        `${activeOverlay.name} [${activeOverlay.mode === 'multi-temporal' ? 'Multi-Temporal Stack' : activeOverlay.mode === 'bi-temporal' ? 'Bi-Temporal Pair' : 'Single Scene'}]`
       );
     };
 
@@ -1085,6 +1421,15 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     updateOverlayLayers(map, activeOverlay, overlayOpacity, temporalMode, temporalSlider, isOverlayVisible, bandPreset);
   }, [bandPreset, activeOverlay, overlayOpacity, temporalMode, temporalSlider, isOverlayVisible, updateOverlayLayers]);
 
+  // 3c. React to multi-temporal step scrubber adjustments
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !activeOverlay || !map.isStyleLoaded()) return;
+    if (activeOverlay.mode === 'multi-temporal' || focusedTimeline) {
+      updateOverlayLayers(map, activeOverlay, overlayOpacity, temporalMode, temporalSlider, isOverlayVisible, bandPreset);
+    }
+  }, [activeTimelineStep, activeOverlay, overlayOpacity, temporalMode, temporalSlider, isOverlayVisible, bandPreset, focusedTimeline, updateOverlayLayers]);
+
   // 4. React to dynamic GeoJSON detections from AI inference queries
   useEffect(() => {
     const map = mapRef.current;
@@ -1120,6 +1465,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           source.setData({ type: 'FeatureCollection', features: [] });
         }
         setDetectionCount(0);
+        activeDetectionFeaturesRef.current = [];
         return;
       }
 
@@ -1145,6 +1491,60 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           });
         }
       }
+
+      // Decorate features with analyst triage verdict styling, candidate IDs, and selection focus
+      targetGeoJson.features.forEach((feat: any, idx: number) => {
+        if (!feat.properties) feat.properties = {};
+        const featId = feat.properties.id || (feat.id !== undefined ? String(feat.id) : `cand-${idx + 1}`);
+        feat.properties.id = featId;
+
+        const review = analystReviews[featId];
+        const verdict = review?.verdict || feat.properties.analyst_verdict || 'pending';
+        const isFocused = focusedCandidateId === featId;
+
+        let strokeColor = '#00f2ff';
+        let fillColor = '#00f2ff';
+        let fillOpacity = 0.28;
+        let strokeWidth = 2.5;
+
+        switch (verdict) {
+          case 'confirmed':
+            strokeColor = '#10b981'; // Emerald Green
+            fillColor = '#10b981';
+            fillOpacity = isFocused ? 0.55 : 0.35;
+            strokeWidth = isFocused ? 4.5 : 3.0;
+            break;
+          case 'rejected':
+            strokeColor = '#64748b'; // Muted Slate Gray
+            fillColor = '#64748b';
+            fillOpacity = isFocused ? 0.22 : 0.10;
+            strokeWidth = isFocused ? 3.0 : 1.5;
+            break;
+          case 'flagged':
+            strokeColor = '#f59e0b'; // Amber Warning
+            fillColor = '#f59e0b';
+            fillOpacity = isFocused ? 0.55 : 0.38;
+            strokeWidth = isFocused ? 4.5 : 3.0;
+            break;
+          case 'pending':
+          default:
+            strokeColor = isFocused ? '#ffffff' : '#00f2ff';
+            fillColor = '#00f2ff';
+            fillOpacity = isFocused ? 0.50 : 0.28;
+            strokeWidth = isFocused ? 4.5 : 2.5;
+            break;
+        }
+
+        feat.properties.strokeColor = strokeColor;
+        feat.properties.fillColor = fillColor;
+        feat.properties.fillOpacity = fillOpacity;
+        feat.properties.strokeWidth = strokeWidth;
+        feat.properties.analystVerdict = verdict;
+        feat.properties.analystNotes = review?.notes || '';
+        feat.properties.isFocused = isFocused;
+      });
+
+      activeDetectionFeaturesRef.current = targetGeoJson.features;
 
       const source = map.getSource('satquery-detections') as maplibregl.GeoJSONSource;
       if (source) {
@@ -1182,6 +1582,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       const count = targetGeoJson.features ? targetGeoJson.features.length : 0;
       setDetectionCount(count);
 
+      const isNewGeoJson = prevGeoJsonDataRef.current !== geoJsonData;
+      prevGeoJsonDataRef.current = geoJsonData;
+
       const bounds = getBounds(targetGeoJson);
       if (bounds) {
         const [[minLng, minLat], [maxLng, maxLat]] = bounds;
@@ -1199,14 +1602,16 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           const midLat = (minLat + maxLat) / 2;
           setCenterCoords({ lat: parseFloat(midLat.toFixed(4)), lng: parseFloat(midLng.toFixed(4)) });
 
-          try {
-            map.fitBounds(bounds, {
-              padding: 85,
-              maxZoom: 16.5,
-              duration: 1800
-            });
-          } catch (fitErr) {
-            console.warn('[SatQuery] fitBounds failed, using fallback:', fitErr);
+          if (isNewGeoJson) {
+            try {
+              map.fitBounds(bounds, {
+                padding: 85,
+                maxZoom: 16.5,
+                duration: 1800
+              });
+            } catch (fitErr) {
+              console.warn('[Diachron] fitBounds failed, using fallback:', fitErr);
+            }
           }
 
           const featureLabel = targetGeoJson.features?.[0]?.properties?.label;
@@ -1219,28 +1624,128 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           );
         } else {
           // Coordinates are out of range (projected CRS); use overlay bounds as fallback
-          console.warn('[SatQuery] GeoJSON bounds out of WGS84 range, using overlay fallback:', { minLng, minLat, maxLng, maxLat });
+          console.warn('[Diachron] GeoJSON bounds out of WGS84 range, using overlay fallback:', { minLng, minLat, maxLng, maxLat });
           if (activeOverlay?.bounds) {
             const [oMinLng, oMinLat, oMaxLng, oMaxLat] = activeOverlay.bounds;
             const midLng = (oMinLng + oMaxLng) / 2;
             const midLat = (oMinLat + oMaxLat) / 2;
             setCenterCoords({ lat: parseFloat(midLat.toFixed(4)), lng: parseFloat(midLng.toFixed(4)) });
-            try {
-              map.fitBounds([[oMinLng, oMinLat], [oMaxLng, oMaxLat]], {
-                padding: 85,
-                maxZoom: 16.5,
-                duration: 1800
-              });
-            } catch (fitErr) {
-              console.warn('[SatQuery] Overlay fallback fitBounds also failed:', fitErr);
+            if (isNewGeoJson) {
+              try {
+                map.fitBounds([[oMinLng, oMinLat], [oMaxLng, oMaxLat]], {
+                  padding: 85,
+                  maxZoom: 16.5,
+                  duration: 1800
+                });
+              } catch (fitErr) {
+                console.warn('[Diachron] Overlay fallback fitBounds also failed:', fitErr);
+              }
             }
           }
         }
       }
     } catch (err) {
-      console.error('[SatQuery] GeoJSON detection layer error caught by safety guard:', err);
+      console.error('[Diachron] GeoJSON detection layer error caught by safety guard:', err);
     }
-  }, [geoJsonData, datasetName, getBounds, ensureDetectionLayers, activeOverlay]);
+  }, [geoJsonData, datasetName, getBounds, ensureDetectionLayers, activeOverlay, analystReviews, focusedCandidateId]);
+
+  // 4b. Smooth camera glide to focused candidate when selected in Review Queue
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focusedCandidateId) return;
+
+    const features = activeDetectionFeaturesRef.current;
+    if (!features || features.length === 0) return;
+
+    const matchedFeat = features.find(
+      (f: any) => f.properties?.id === focusedCandidateId || String(f.id) === focusedCandidateId
+    );
+    if (!matchedFeat) return;
+
+    const isValidLngLat = (lng: number, lat: number) =>
+      isFinite(lng) && isFinite(lat) && lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90;
+
+    const props = matchedFeat.properties || {};
+    const geom = matchedFeat.geometry || {};
+    let featBounds: [[number, number], [number, number]] | null = null;
+    let center: [number, number] | null = null;
+
+    // 1. Try extracting explicit WGS84 centroid & bounding box from properties if present
+    if (Array.isArray(props.centroid_wgs84) && props.centroid_wgs84.length >= 2) {
+      const [cLng, cLat] = props.centroid_wgs84;
+      if (isValidLngLat(cLng, cLat)) {
+        center = [cLng, cLat];
+      }
+    } else if (Array.isArray(props.center) && props.center.length >= 2) {
+      const [cLng, cLat] = props.center;
+      if (isValidLngLat(cLng, cLat)) {
+        center = [cLng, cLat];
+      }
+    }
+
+    if (Array.isArray(props.bounding_box_wgs84) && props.bounding_box_wgs84.length === 4) {
+      const [minX, minY, maxX, maxY] = props.bounding_box_wgs84;
+      if (isValidLngLat(minX, minY) && isValidLngLat(maxX, maxY)) {
+        featBounds = [[minX, minY], [maxX, maxY]];
+      }
+    }
+
+    // 2. Extract from geometry coordinates if valid WGS84
+    if (geom.type === 'Polygon' && Array.isArray(geom.coordinates) && geom.coordinates[0]?.length) {
+      const ring = geom.coordinates[0];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let sumX = 0, sumY = 0;
+      let allValid = true;
+
+      ring.forEach(([x, y]: [number, number]) => {
+        if (!isValidLngLat(x, y)) {
+          allValid = false;
+          return;
+        }
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        sumX += x;
+        sumY += y;
+      });
+
+      if (allValid && ring.length > 0) {
+        featBounds = [[minX, minY], [maxX, maxY]];
+        center = [sumX / ring.length, sumY / ring.length];
+      }
+    } else if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
+      const [pLng, pLat] = geom.coordinates;
+      if (isValidLngLat(pLng, pLat)) {
+        center = [pLng, pLat];
+      }
+    }
+
+    // 3. Perform safe map navigation without throwing errors
+    try {
+      if (
+        featBounds &&
+        isValidLngLat(featBounds[0][0], featBounds[0][1]) &&
+        isValidLngLat(featBounds[1][0], featBounds[1][1]) &&
+        (featBounds[1][0] - featBounds[0][0] > 0.0002 || featBounds[1][1] - featBounds[0][1] > 0.0002)
+      ) {
+        map.fitBounds(featBounds, {
+          padding: 140,
+          maxZoom: 17,
+          duration: 1200,
+        });
+      } else if (center && isValidLngLat(center[0], center[1])) {
+        map.flyTo({ center, zoom: 16.2, duration: 1200 });
+      }
+    } catch (navErr) {
+      console.warn('[Diachron] Safe navigation caught bounds error:', navErr);
+      if (center && isValidLngLat(center[0], center[1])) {
+        try {
+          map.flyTo({ center, zoom: 15, duration: 1000 });
+        } catch (_) {}
+      }
+    }
+  }, [focusedCandidateId]);
 
   // 4b. Analysis raster overlay (change mask and similar).
   //
@@ -1302,6 +1807,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     if (layer === 'hybrid') targetStyle = HYBRID_STYLE;
     else if (layer === 'streets') targetStyle = STREETS_STYLE;
     else if (layer === 'sar') targetStyle = DARK_TACTICAL_STYLE;
+    else if (layer === 'tactical-offline') targetStyle = TACTICAL_OFFLINE_STYLE;
 
     map.setStyle(targetStyle);
 
@@ -1563,7 +2069,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   };
 
   const isCompact = density === 'compact';
-  const overlayOn = Boolean(activeOverlay) && isOverlayVisible && overlayOpacity > 0.01;
+  const overlayOn = Boolean(activeOverlay || (timelineData && timelineData.length > 0)) && isOverlayVisible && overlayOpacity > 0.01;
   const readout = cursorCoords ?? centerCoords;
 
   const closeMenus = () => {
@@ -1679,6 +2185,17 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             <span className="hidden sm:inline">Select AOI</span>
           </button>
         )}
+
+        {/* Archive Semantic Retrieval & Clustering Button */}
+        <button
+          type="button"
+          onClick={() => setShowArchiveModal(true)}
+          className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-mono transition-all cursor-pointer border bg-surface-2 text-ink-muted border-line hover:border-accent/40 hover:text-accent shadow-sm"
+          title="Search 75+ archive scenes by semantic meaning, explore clusters, or inspect anomalies"
+        >
+          <Sparkles size={12} className="text-accent" />
+          <span className="hidden sm:inline">Archive Search</span>
+        </button>
 
         {/* Layers & rendering */}
         <div className="relative">
@@ -1975,127 +2492,344 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         </div>
 
         {/* --------------------------------------------------------------- */}
-        {/* Temporal / opacity dock — only meaningful with a scene loaded.   */}
+        {/* Unified Temporal / Multi-Temporal / Opacity Dock                */}
         {/* --------------------------------------------------------------- */}
-        {activeOverlay && showOverlayControls && (
-          <div className="absolute bottom-2.5 left-1/2 z-10 w-[min(30rem,calc(100%-1.25rem))] -translate-x-1/2">
-            <div className="rounded-xl border border-line bg-ground/90 p-2 shadow-2xl backdrop-blur-md">
-              <div className="flex items-center gap-2">
-                {activeOverlay.mode === 'bi-temporal' ? (
-                  <div className="flex items-center gap-0.5 rounded-lg border border-line bg-surface/80 p-0.5">
-                    {TEMPORAL_MODES.map((mode) => (
-                      <button
-                        key={mode.value}
-                        type="button"
-                        title={mode.title}
-                        onClick={() => setTemporalMode(mode.value)}
-                        className={`cursor-pointer rounded-[6px] px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors ${
-                          temporalMode === mode.value
-                            ? 'bg-accent/15 text-accent'
-                            : 'text-ink-faint hover:text-ink'
-                        }`}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="label-caps text-ink-faint">Overlay</span>
-                )}
-
-                {activeOverlay.mode === 'bi-temporal' && (
-                  <IconButton
-                    label={isBlinking ? 'Stop blink comparison' : 'Blink between T1 and T2'}
-                    size="sm"
-                    active={isBlinking}
-                    onClick={() => setIsBlinking(!isBlinking)}
-                  >
-                    {isBlinking ? <Pause size={12} /> : <Play size={12} />}
-                  </IconButton>
-                )}
-
-                <div className="ml-auto flex min-w-0 flex-1 items-center gap-1.5">
-                  <IconButton
-                    label={overlayOn ? 'Hide imagery overlay' : 'Show imagery overlay'}
-                    size="sm"
-                    active={overlayOn}
-                    onClick={() => setIsOverlayVisible(!isOverlayVisible)}
-                  >
-                    {overlayOn ? <Eye size={12} /> : <EyeOff size={12} />}
-                  </IconButton>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={Math.round(overlayOpacity * 100)}
-                    aria-label="Overlay opacity"
-                    onChange={(e) => setOverlayOpacity(parseFloat(e.target.value) / 100)}
-                    className="min-w-0 flex-1"
-                  />
-                  <span className="w-8 shrink-0 text-right font-mono text-[10px] text-ink-muted">
-                    {Math.round(overlayOpacity * 100)}%
+        {(activeOverlay || (timelineData && timelineData.length > 1)) && showOverlayControls && (
+          <div
+            className={`absolute bottom-2.5 left-1/2 z-10 -translate-x-1/2 transition-all duration-200 ${
+              isMultiTemporal && timelineData && timelineData.length > 1
+                ? 'w-[min(36rem,calc(100%-1.25rem))]'
+                : 'w-[min(30rem,calc(100%-1.25rem))]'
+            }`}
+          >
+            <div className="rounded-xl border border-line bg-ground/90 p-2.5 shadow-2xl backdrop-blur-md">
+              {/* Multi-Site Spatial Footprint Switcher Bar */}
+              {activeOverlay?.sites && activeOverlay.sites.length > 1 && (
+                <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1.5 border-b border-line/60 scrollbar-none">
+                  <span className="shrink-0 text-[10px] font-mono text-ink-faint uppercase tracking-wider flex items-center gap-1">
+                    <MapPin size={11} className="text-accent" />
+                    Sites ({activeOverlay.sites.length}):
                   </span>
+                  {activeOverlay.sites.map((st) => {
+                    const isSelected = activeSiteId ? st.site_id === activeSiteId : st.site_id === activeOverlay.sites![0].site_id;
+                    return (
+                      <button
+                        key={st.site_id}
+                        type="button"
+                        onClick={() => {
+                          setActiveSiteId(st.site_id);
+                          if (mapRef.current && st.bounds) {
+                            mapRef.current.fitBounds(
+                              [
+                                [st.bounds[0], st.bounds[1]],
+                                [st.bounds[2], st.bounds[3]]
+                              ],
+                              { padding: 85, maxZoom: 16.5, duration: 1800 }
+                            );
+                          }
+                        }}
+                        className={`shrink-0 cursor-pointer rounded-full px-2.5 py-0.5 font-mono text-[10px] transition-all flex items-center gap-1.5 border ${
+                          isSelected
+                            ? 'bg-accent/20 border-accent text-accent font-semibold shadow-[0_0_10px_rgba(0,242,255,0.25)]'
+                            : 'bg-surface-2/80 border-line text-ink-muted hover:border-accent/40 hover:text-ink'
+                        }`}
+                        title={`Focus ${st.name} (${st.scene_count} Epochs, ${st.date_range})`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-accent animate-pulse' : 'bg-ink-muted'}`} />
+                        <span className="truncate max-w-[170px]">{st.name}</span>
+                        <span className="text-[9px] opacity-75">({st.scene_count} Epochs)</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
+              )}
 
-              {activeOverlay.mode === 'bi-temporal' &&
-                (temporalMode === 'swipe' || temporalMode === 'fade') && (
-                  <div className="mt-2 flex items-center gap-2 border-t border-line pt-2">
-                    <span className="shrink-0 font-mono text-[10px] text-ink-faint">T1</span>
+              {isMultiTemporal && timelineData && timelineData.length > 1 ? (
+                <div className="flex flex-col gap-2">
+                  {/* Top Bar: Playback Controls, Active Observation Chip, Change Badges, Opacity */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* Play / Pause Toggle Button */}
+                      <IconButton
+                        label={isPlayingTimeline ? 'Pause timeline playback' : 'Play timeline animation'}
+                        size="sm"
+                        active={isPlayingTimeline}
+                        onClick={() => {
+                          setIsBlinking(false);
+                          setIsPlayingTimeline(!isPlayingTimeline);
+                        }}
+                      >
+                        {isPlayingTimeline ? <Pause size={12} className="text-amber-400" /> : <Play size={12} className="text-cyan-400" />}
+                      </IconButton>
+
+                      {/* Step Navigation Prev / Next */}
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          title="Previous observation"
+                          onClick={() => handleTimelineStepChange(Math.max(0, currentStep - 1))}
+                          disabled={currentStep === 0}
+                          className="flex h-6 w-6 items-center justify-center rounded-l-md border border-line bg-surface/80 text-ink-muted hover:bg-surface hover:text-ink disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          <ChevronLeft size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Next observation"
+                          onClick={() => handleTimelineStepChange(Math.min(timelineData.length - 1, currentStep + 1))}
+                          disabled={currentStep >= timelineData.length - 1}
+                          className="flex h-6 w-6 items-center justify-center rounded-r-md border-y border-r border-line bg-surface/80 text-ink-muted hover:bg-surface hover:text-ink disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          <ChevronRight size={13} />
+                        </button>
+                      </div>
+
+                      {/* Active Observation Status Chip */}
+                      <div className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 font-mono text-[10px] text-cyan-300">
+                        <Calendar size={11} className="text-cyan-400 shrink-0" />
+                        <span className="font-semibold">
+                          {isBaseline ? 'T0 (Baseline)' : `T${activeObs?.step ?? currentStep}`}
+                        </span>
+                        <span className="text-cyan-400/90 font-medium">
+                          {activeObs?.date ? (activeObs.date.length > 10 ? activeObs.date.slice(0, 10) : activeObs.date) : ''}
+                        </span>
+                        <span className="text-[9px] text-ink-faint">
+                          ({currentStep + 1}/{timelineData.length})
+                        </span>
+                      </div>
+
+                      {/* Dynamic Change Detection Metrics on Active Step */}
+                      {!isBaseline && ((activeObs?.change_area_ha ?? 0) > 0) && (
+                        <span className="hidden sm:inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 font-mono text-[9.5px] font-medium text-amber-300">
+                          +{((activeObs?.change_area_ha ?? 0)).toFixed(1)} ha ({((((activeObs?.change_fraction ?? 0))) * 100).toFixed(1)}%)
+                        </span>
+                      )}
+                      {activeObs?.new_breakpoints && activeObs.new_breakpoints > 0 ? (
+                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-rose-500/20 border border-rose-500/30 px-2 py-0.5 font-mono text-[9.5px] font-semibold text-rose-300">
+                          <Sparkles size={9} />
+                          {activeObs.new_breakpoints} new
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Right: Overlay Visibility & Opacity Slider */}
+                    <div className="ml-auto flex min-w-0 flex-1 max-w-[12rem] items-center gap-1.5">
+                      <IconButton
+                        label={overlayOn ? 'Hide imagery overlay' : 'Show imagery overlay'}
+                        size="sm"
+                        active={overlayOn}
+                        onClick={() => setIsOverlayVisible(!isOverlayVisible)}
+                      >
+                        {overlayOn ? <Eye size={12} /> : <EyeOff size={12} />}
+                      </IconButton>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(overlayOpacity * 100)}
+                        aria-label="Overlay opacity"
+                        onChange={(e) => setOverlayOpacity(parseFloat(e.target.value) / 100)}
+                        className="min-w-0 flex-1"
+                      />
+                      <span className="w-8 shrink-0 text-right font-mono text-[10px] text-ink-muted">
+                        {Math.round(overlayOpacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Scrubber & Timeline Date Marks */}
+                  <div className="border-t border-line/50 pt-2">
                     <input
                       type="range"
                       min={0}
-                      max={100}
-                      value={temporalSlider}
-                      aria-label={temporalMode === 'swipe' ? 'Swipe position' : 'Blend between T1 and T2'}
-                      onChange={(e) => {
-                        setIsBlinking(false);
-                        setTemporalSlider(parseInt(e.target.value, 10));
-                      }}
-                      className="min-w-0 flex-1"
+                      max={timelineData.length - 1}
+                      value={currentStep}
+                      aria-label="Multi-temporal step scrubber"
+                      onChange={(e) => handleTimelineStepChange(parseInt(e.target.value, 10))}
+                      className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface-2 accent-cyan-400 focus:outline-none"
                     />
-                    <span className="shrink-0 font-mono text-[10px] text-ink-faint">T2</span>
-                    <ArrowLeftRight size={11} className="shrink-0 text-accent" aria-hidden />
-                  </div>
-                )}
 
-              {/* Authoritative Spectral Band & Index Capabilities */}
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5 border-t border-line/60 pt-1.5 text-[10px] font-mono">
-                <div className="flex items-center gap-1.5 text-ink-muted">
-                  <span
-                    className={`rounded px-1.5 py-0.5 ${
-                      nirCapability.t1Available
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : 'bg-surface-2 text-ink-faint border border-line'
-                    }`}
-                    title={nirCapability.t1Available ? 'T1 has Red, Green, Blue, NIR (B8)' : 'T1 lacks NIR band'}
-                  >
-                    T1: RGB ✓ | NIR {nirCapability.t1Available ? '✓' : '✗'} | NDVI {nirCapability.t1Available ? '✓' : '✗'}
-                  </span>
-                  {activeOverlay.mode === 'bi-temporal' && (
-                    <span
-                      className={`rounded px-1.5 py-0.5 ${
-                        nirCapability.t2Available
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'bg-amber-500/10 text-amber-400/90 border border-amber-500/20'
-                      }`}
-                      title={nirCapability.t2Available ? 'T2 contains RGB only; NIR band is absent' : 'T2 contains RGB only; NIR band is absent'}
-                    >
-                      T2: RGB ✓ | NIR {nirCapability.t2Available ? '✓' : '✗'} | NDVI {nirCapability.t2Available ? '✓' : '✗'}
-                    </span>
-                  )}
+                    {/* Date ticks under scrubber */}
+                    <div className="mt-1.5 flex justify-between px-1">
+                      {timelineData.map((obs, idx) => {
+                        const active = idx === currentStep;
+                        const past = idx <= currentStep;
+                        const label = obs.date ? (obs.date.length >= 10 ? obs.date.slice(5, 10) : obs.date) : `T${idx}`;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleTimelineStepChange(idx)}
+                            title={`Step T${idx}: ${obs.date} ${obs.is_baseline ? '(Baseline)' : ''}`}
+                            className="group flex flex-col items-center gap-0.5 text-center focus:outline-none cursor-pointer"
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full transition-transform ${
+                                active
+                                  ? 'scale-150 bg-cyan-400 ring-2 ring-cyan-400/40 shadow-sm shadow-cyan-400/50'
+                                  : past
+                                  ? 'bg-ink-muted group-hover:bg-ink'
+                                  : 'bg-surface-3 group-hover:bg-ink-faint'
+                              }`}
+                            />
+                            <span
+                              className={`font-mono text-[9px] transition-colors ${
+                                active
+                                  ? 'font-bold text-cyan-300'
+                                  : 'text-ink-faint group-hover:text-ink-muted'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Spectral capabilities & stack extent */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-line/60 pt-1.5 text-[10px] font-mono">
+                    <div className="flex items-center gap-1.5 text-ink-muted">
+                      <span
+                        className={`rounded px-1.5 py-0.5 ${
+                          nirCapability.available
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-surface-2 text-ink-faint border border-line'
+                        }`}
+                        title={nirCapability.reason}
+                      >
+                        Obs T{currentStep}: RGB ✓ | NIR {nirCapability.available ? '✓' : '✗'} | NDVI {nirCapability.available ? '✓' : '✗'}
+                      </span>
+                    </div>
+                    <div className="text-ink-faint text-[9.5px]">
+                      {timelineData.length} observations ({timelineData[0]?.date.slice(0, 10)} → {timelineData[timelineData.length - 1]?.date.slice(0, 10)})
+                    </div>
+                  </div>
                 </div>
-                {activeOverlay.mode === 'bi-temporal' && !nirCapability.jointAvailable && (
-                  <span className="text-amber-400/90 text-[9.5px]">
-                    Bi-temporal ΔNDVI unavailable (T2 lacks NIR)
-                  </span>
-                )}
-                {activeOverlay.mode === 'bi-temporal' && nirCapability.asymmetricNote && (
-                  <span className="text-amber-400/80 text-[9.5px]">
-                    {nirCapability.asymmetricNote}
-                  </span>
-                )}
-              </div>
+              ) : (
+                /* Bi-Temporal Pair & Single-Scene controls */
+                <div>
+                  <div className="flex items-center gap-2">
+                    {activeOverlay?.mode === 'bi-temporal' ? (
+                      <div className="flex items-center gap-0.5 rounded-lg border border-line bg-surface/80 p-0.5">
+                        {TEMPORAL_MODES.map((mode) => (
+                          <button
+                            key={mode.value}
+                            type="button"
+                            title={mode.title}
+                            onClick={() => setTemporalMode(mode.value)}
+                            className={`cursor-pointer rounded-[6px] px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors ${
+                              temporalMode === mode.value
+                                ? 'bg-accent/15 text-accent'
+                                : 'text-ink-faint hover:text-ink'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="label-caps text-ink-faint">Overlay</span>
+                    )}
+
+                    {activeOverlay?.mode === 'bi-temporal' && (
+                      <IconButton
+                        label={isBlinking ? 'Stop blink comparison' : 'Blink between T1 and T2'}
+                        size="sm"
+                        active={isBlinking}
+                        onClick={() => {
+                          setIsPlayingTimeline(false);
+                          setIsBlinking(!isBlinking);
+                        }}
+                      >
+                        {isBlinking ? <Pause size={12} /> : <Play size={12} />}
+                      </IconButton>
+                    )}
+
+                    <div className="ml-auto flex min-w-0 flex-1 items-center gap-1.5">
+                      <IconButton
+                        label={overlayOn ? 'Hide imagery overlay' : 'Show imagery overlay'}
+                        size="sm"
+                        active={overlayOn}
+                        onClick={() => setIsOverlayVisible(!isOverlayVisible)}
+                      >
+                        {overlayOn ? <Eye size={12} /> : <EyeOff size={12} />}
+                      </IconButton>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(overlayOpacity * 100)}
+                        aria-label="Overlay opacity"
+                        onChange={(e) => setOverlayOpacity(parseFloat(e.target.value) / 100)}
+                        className="min-w-0 flex-1"
+                      />
+                      <span className="w-8 shrink-0 text-right font-mono text-[10px] text-ink-muted">
+                        {Math.round(overlayOpacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {activeOverlay?.mode === 'bi-temporal' &&
+                    (temporalMode === 'swipe' || temporalMode === 'fade') && (
+                      <div className="mt-2 flex items-center gap-2 border-t border-line pt-2">
+                        <span className="shrink-0 font-mono text-[10px] text-ink-faint">T1</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={temporalSlider}
+                          aria-label={temporalMode === 'swipe' ? 'Swipe position' : 'Blend between T1 and T2'}
+                          onChange={(e) => {
+                            setIsBlinking(false);
+                            setTemporalSlider(parseInt(e.target.value, 10));
+                          }}
+                          className="min-w-0 flex-1"
+                        />
+                        <span className="shrink-0 font-mono text-[10px] text-ink-faint">T2</span>
+                        <ArrowLeftRight size={11} className="shrink-0 text-accent" aria-hidden />
+                      </div>
+                    )}
+
+                  {/* Authoritative Spectral Band & Index Capabilities */}
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5 border-t border-line/60 pt-1.5 text-[10px] font-mono">
+                    <div className="flex items-center gap-1.5 text-ink-muted">
+                      <span
+                        className={`rounded px-1.5 py-0.5 ${
+                          nirCapability.t1Available
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-surface-2 text-ink-faint border border-line'
+                        }`}
+                        title={nirCapability.t1Available ? 'T1 has Red, Green, Blue, NIR (B8)' : 'T1 lacks NIR band'}
+                      >
+                        T1: RGB ✓ | NIR {nirCapability.t1Available ? '✓' : '✗'} | NDVI {nirCapability.t1Available ? '✓' : '✗'}
+                      </span>
+                      {activeOverlay?.mode === 'bi-temporal' && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 ${
+                            nirCapability.t2Available
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-amber-500/10 text-amber-400/90 border border-amber-500/20'
+                          }`}
+                          title={nirCapability.t2Available ? 'T2 contains RGB only; NIR band is absent' : 'T2 contains RGB only; NIR band is absent'}
+                        >
+                          T2: RGB ✓ | NIR {nirCapability.t2Available ? '✓' : '✗'} | NDVI {nirCapability.t2Available ? '✓' : '✗'}
+                        </span>
+                      )}
+                    </div>
+                    {activeOverlay?.mode === 'bi-temporal' && !nirCapability.jointAvailable && (
+                      <span className="text-amber-400/90 text-[9.5px]">
+                        Bi-temporal ΔNDVI unavailable (T2 lacks NIR)
+                      </span>
+                    )}
+                    {activeOverlay?.mode === 'bi-temporal' && nirCapability.asymmetricNote && (
+                      <span className="text-amber-400/80 text-[9.5px]">
+                        {nirCapability.asymmetricNote}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2254,6 +2988,202 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                 sendQuery(
                   `Run ChangeFormer change detection on this bi-temporal pair (${response.name}) to identify significant surface changes between ${response.t1?.acquisition_date || 'T1'} and ${response.t2?.acquisition_date || 'T2'}.`
                 );
+              }}
+            />
+
+            <ArchiveSearchModal
+              isOpen={showArchiveModal}
+              onClose={() => setShowArchiveModal(false)}
+              currentMapBbox={
+                mapRef.current
+                  ? (() => {
+                      const b = mapRef.current.getBounds();
+                      return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+                    })()
+                  : null
+              }
+              onSelectTileForMap={(tile) => {
+                setShowArchiveModal(false);
+                const thumbUrl = resolveAssetUrl(tile.thumbnail_url) || tile.thumbnail_url || '';
+                const newDataset: SceneDataset = {
+                  name: tile.anomaly_title || tile.archetype_title || tile.filename,
+                  sizeLabel: tile.is_anomaly ? 'Physical Outlier' : 'Archive Scene',
+                  sensor: tile.sensor,
+                  mode: 'single',
+                  crs: 'EPSG:4326 (WGS84)',
+                  resolution: '10.0m',
+                  syncedWithBackend: true,
+                  georeferenced: true,
+                  datasetId: `archive-tile-${tile.tile_id}`,
+                  t1Filename: tile.filename,
+                };
+                const newOverlay: SceneOverlay = {
+                  datasetId: `archive-tile-${tile.tile_id}`,
+                  name: tile.anomaly_title || tile.archetype_title || tile.filename,
+                  sensor: tile.sensor,
+                  mode: 'single',
+                  bounds: tile.bbox,
+                  center: tile.center,
+                  crs: 'EPSG:4326 (WGS84)',
+                  resolution: '10.0m',
+                  t1ImageUrl: thumbUrl,
+                  t1Filename: tile.filename,
+                };
+                setScene(newDataset, newOverlay);
+                openDock('map');
+                if (mapRef.current && tile.bbox && tile.bbox.length === 4) {
+                  mapRef.current.fitBounds(
+                    [
+                      [tile.bbox[0], tile.bbox[1]],
+                      [tile.bbox[2], tile.bbox[3]],
+                    ],
+                    { padding: 80, duration: 1800 }
+                  );
+                }
+              }}
+              onLoadComparisonPair={(t1, t2) => {
+                setShowArchiveModal(false);
+                const sorted = [t1, t2].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                const older = sorted[0];
+                const newer = sorted[1];
+                const t1Url = resolveAssetUrl(older.thumbnail_url) || older.thumbnail_url || '';
+                const t2Url = resolveAssetUrl(newer.thumbnail_url) || newer.thumbnail_url || '';
+
+                const newDataset: SceneDataset = {
+                  name: `${older.sensor} Pair (${older.date} vs ${newer.date})`,
+                  sizeLabel: 'Bi-Temporal Pair',
+                  sensor: older.sensor,
+                  mode: 'bi-temporal',
+                  crs: 'EPSG:4326 (WGS84)',
+                  resolution: '10.0m',
+                  syncedWithBackend: true,
+                  georeferenced: true,
+                  datasetId: `pair-${older.tile_id}-${newer.tile_id}`,
+                  t1Filename: older.filename,
+                  t2Filename: newer.filename,
+                };
+
+                const newOverlay: SceneOverlay = {
+                  datasetId: `pair-${older.tile_id}-${newer.tile_id}`,
+                  name: `Bi-Temporal Pair (${older.date} vs ${newer.date})`,
+                  sensor: older.sensor,
+                  mode: 'bi-temporal',
+                  bounds: older.bbox || newer.bbox,
+                  center: older.center || newer.center,
+                  crs: 'EPSG:4326 (WGS84)',
+                  resolution: '10.0m',
+                  t1ImageUrl: t1Url,
+                  t2ImageUrl: t2Url,
+                  t1Filename: older.filename,
+                  t2Filename: newer.filename,
+                  scenes: [
+                    {
+                      step: 0,
+                      step_index: 0,
+                      filename: older.filename,
+                      date: older.date,
+                      acquisition_date: older.date,
+                      sensor: older.sensor,
+                      imageUrl: t1Url,
+                      image_url: t1Url,
+                      wgs84_bounds: older.bbox,
+                    },
+                    {
+                      step: 1,
+                      step_index: 1,
+                      filename: newer.filename,
+                      date: newer.date,
+                      acquisition_date: newer.date,
+                      sensor: newer.sensor,
+                      imageUrl: t2Url,
+                      image_url: t2Url,
+                      wgs84_bounds: newer.bbox,
+                    },
+                  ],
+                };
+
+                setScene(newDataset, newOverlay);
+                setTemporalMode('swipe');
+                setTemporalSlider(50);
+                openDock('map');
+                const fitBbox = older.bbox || newer.bbox;
+                if (mapRef.current && fitBbox && fitBbox.length === 4) {
+                  mapRef.current.fitBounds(
+                    [
+                      [fitBbox[0], fitBbox[1]],
+                      [fitBbox[2], fitBbox[3]],
+                    ],
+                    { padding: 80, duration: 1800 }
+                  );
+                }
+              }}
+              onLoadTimelineStack={(tiles, initialTile) => {
+                setShowArchiveModal(false);
+                if (tiles && tiles.length > 0) {
+                  const sorted = [...tiles].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                  const first = sorted[0];
+                  const latest = sorted[sorted.length - 1];
+                  const isPair = sorted.length === 2;
+
+                  const firstThumb = resolveAssetUrl(first.thumbnail_url) || first.thumbnail_url || '';
+                  const latestThumb = resolveAssetUrl(latest.thumbnail_url) || latest.thumbnail_url || '';
+
+                  const newDataset: SceneDataset = {
+                    name: `${initialTile.sensor} Archive Stack (${sorted.length} scenes)`,
+                    sizeLabel: 'Archive Stack',
+                    sensor: initialTile.sensor,
+                    mode: sorted.length >= 2 ? 'multi-temporal' : 'single',
+                    crs: 'EPSG:4326 (WGS84)',
+                    resolution: '10.0m',
+                    syncedWithBackend: true,
+                    georeferenced: true,
+                    datasetId: `archive-timeline-${initialTile.tile_id}`,
+                    t1Filename: first.filename,
+                    t2Filename: latest.filename,
+                  };
+
+                  const newOverlay: SceneOverlay = {
+                    datasetId: `archive-timeline-${initialTile.tile_id}`,
+                    name: `${initialTile.sensor} Archive Timeline (${sorted.length} Epochs)`,
+                    sensor: initialTile.sensor,
+                    mode: sorted.length >= 2 ? 'multi-temporal' : 'single',
+                    bounds: initialTile.bbox || latest.bbox,
+                    center: initialTile.center || latest.center,
+                    crs: 'EPSG:4326 (WGS84)',
+                    resolution: '10.0m',
+                    t1ImageUrl: latestThumb,
+                    t2ImageUrl: isPair ? firstThumb : undefined,
+                    t1Filename: latest.filename,
+                    t2Filename: isPair ? first.filename : undefined,
+                    scenes: sorted.map((s, idx) => ({
+                      step: idx,
+                      step_index: idx,
+                      filename: s.filename,
+                      date: s.date,
+                      acquisition_date: s.date,
+                      sensor: s.sensor,
+                      cloud_cover: s.cloud_cover,
+                      imageUrl: resolveAssetUrl(s.thumbnail_url) || s.thumbnail_url || '',
+                      image_url: resolveAssetUrl(s.thumbnail_url) || s.thumbnail_url || '',
+                      wgs84_bounds: s.bbox,
+                    })),
+                  };
+
+                  setScene(newDataset, newOverlay);
+                  setActiveTimelineStep(sorted.length - 1);
+                  openDock('map');
+
+                  const targetBbox = initialTile.bbox || latest.bbox;
+                  if (mapRef.current && targetBbox && targetBbox.length === 4) {
+                    mapRef.current.fitBounds(
+                      [
+                        [targetBbox[0], targetBbox[1]],
+                        [targetBbox[2], targetBbox[3]],
+                      ],
+                      { padding: 80, duration: 1800 }
+                    );
+                  }
+                }
               }}
             />
           </>

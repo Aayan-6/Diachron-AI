@@ -1,5 +1,5 @@
 /**
- * SatQuery AI — backend client.
+ * Diachron AI — backend client.
  *
  * The backend is a FastAPI app (see backend/SatQuery-master/backend) exposing:
  *
@@ -16,9 +16,18 @@
  * to point at a different host (e.g. a tunnelled GPU box).
  */
 
-import type { BandCapabilityContract, ImageOverlayEvidence } from './types';
+import type {
+  BandCapabilityContract,
+  CandidateAttributionDossier,
+  ChangeCandidate,
+  ImageOverlayEvidence,
+  ProvenanceRecord,
+  SceneOverlay,
+  TimelineObservation,
+} from './types';
 
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').trim();
+
 
 /** Normalised API root, never with a trailing slash. */
 export const API_BASE_URL = RAW_BASE.replace(/\/+$/, '');
@@ -137,7 +146,7 @@ async function request<T>(
     }
     const reason = (err as Error)?.message ?? 'Network error';
     throw new ApiError(
-      'Cannot reach the SatQuery backend',
+      'Cannot reach the Diachron AI backend',
       0,
       reason + ' — is the FastAPI server running and reachable at ' + (ASSET_ORIGIN || 'this origin') + '?'
     );
@@ -175,7 +184,7 @@ export interface SystemStatusResponse {
 }
 
 export function fetchSystemStatus(options?: RequestOptions): Promise<SystemStatusResponse> {
-  return request<SystemStatusResponse>('/status', { method: 'GET' }, { timeoutMs: 15000, ...options });
+  return request<SystemStatusResponse>('/status', { method: 'GET' }, { timeoutMs: 6000, ...options });
 }
 
 /** Human-readable name of whatever hardware is actually serving inference. */
@@ -212,7 +221,13 @@ export interface SatQueryResponse {
   /** Not in the current schema; tolerated if a service starts emitting it. */
   response?: string;
   confidence?: number;
+  analysis_mode?: 'single' | 'bi-temporal' | 'multi-temporal';
+  timeline?: TimelineObservation[];
+  candidates?: ChangeCandidate[];
+  scene_overlay?: SceneOverlay;
+  provenance?: ProvenanceRecord;
 }
+
 
 export interface SubmitQueryArgs {
   query: string;
@@ -264,7 +279,7 @@ export async function submitSatQuery(args: SubmitQueryArgs): Promise<SatQueryRes
   if (t2Filename) form.append('t2_filename', t2Filename);
   if (datasetId) form.append('dataset_id', datasetId);
 
-  console.log('[SatQuery Client] Dispatching query:', {
+  console.log('[Diachron Client] Dispatching query:', {
     query: query.slice(0, 80),
     filesCount: fileArray.length,
     t1: t1Filename || fileArray[0]?.name || beforeFile?.name,
@@ -334,6 +349,31 @@ export function extractImageOverlay(res: SatQueryResponse): ImageOverlayEvidence
   return null;
 }
 
+/**
+ * Extracts all georeferenced raster overlays from `visual_evidence`, ordered chronologically.
+ */
+export function extractAllImageOverlays(res: SatQueryResponse): ImageOverlayEvidence[] {
+  const items = res.visual_evidence ?? [];
+  const overlays: ImageOverlayEvidence[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const candidate = item as Record<string, unknown>;
+    if (candidate.type !== 'ImageOverlay') continue;
+
+    const bounds = candidate.wgs84_bounds;
+    const url = candidate.url;
+    if (typeof url !== 'string' || !Array.isArray(bounds) || bounds.length !== 4) continue;
+
+    overlays.push({
+      label: typeof candidate.label === 'string' ? candidate.label : 'Overlay',
+      url: resolveAssetUrl(url) ?? url,
+      bounds: bounds.map(Number) as [number, number, number, number],
+      opacity: typeof candidate.opacity === 'number' ? candidate.opacity : 0.7,
+    });
+  }
+  return overlays;
+}
+
 /** Number of drawn features in the evidence payload, for the message footer. */
 export function countEvidenceFeatures(res: SatQueryResponse): number {
   const geo = extractGeoJson(res);
@@ -350,7 +390,7 @@ export interface ImageryUploadResponse {
   dataset_id: string;
   name: string;
   sensor: string;
-  mode: 'single' | 'bi-temporal';
+  mode: 'single' | 'bi-temporal' | 'multi-temporal';
   /** False when the raster has no CRS; bounds and center are then null. */
   georeferenced?: boolean;
   wgs84_bounds: [number, number, number, number] | null;
@@ -362,10 +402,16 @@ export interface ImageryUploadResponse {
   t2_image_url?: string | null;
   t1_filename?: string;
   t2_filename?: string | null;
+  scenes?: {
+    step_index: number;
+    filename: string;
+    image_url: string;
+  }[];
   band_contract?: BandCapabilityContract;
   t1_nir_image_url?: string | null;
   t2_nir_image_url?: string | null;
 }
+
 
 export function uploadImagery(
   files: File[],
@@ -418,5 +464,46 @@ export function fetchImageryCapabilities(
     `/imagery/capabilities?dataset_name=${encodeURIComponent(datasetName)}`,
     { method: 'GET' },
     { signal, timeoutMs: 8000 }
+  );
+}
+
+export interface FetchAttributionArgs {
+  candidateId: number | string;
+  candidate: ChangeCandidate;
+  scenePaths?: string[];
+  datasetName?: string | null;
+  datasetId?: string | null;
+  t1Filename?: string | null;
+  t2Filename?: string | null;
+  query?: string | null;
+  forceRefresh?: boolean;
+}
+
+/**
+ * Trajectory Change Captioning & Physical Attribution (Upgrade 1).
+ * Invokes Qwen3-VL on GPU to generate an attribution dossier for a candidate.
+ */
+export function fetchCandidateAttribution(
+  args: FetchAttributionArgs,
+  signal?: AbortSignal
+): Promise<CandidateAttributionDossier> {
+  const { candidateId, candidate, scenePaths, datasetName, datasetId, t1Filename, t2Filename, query, forceRefresh } = args;
+  return request<CandidateAttributionDossier>(
+    `/candidates/${candidateId}/attribution`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        candidate,
+        scene_paths: scenePaths,
+        dataset_name: datasetName,
+        dataset_id: datasetId,
+        t1_filename: t1Filename,
+        t2_filename: t2Filename,
+        query,
+        force_refresh: forceRefresh ?? false,
+      }),
+    },
+    { signal, timeoutMs: 60000 }
   );
 }

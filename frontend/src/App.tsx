@@ -27,7 +27,7 @@ const RouteFallback = () => (
 const App = () => (
   <AppStateProvider>
     <BrowserRouter>
-      <ErrorBoundary fallbackTitle="SatQuery UI Encountered an Issue">
+      <ErrorBoundary fallbackTitle="Diachron AI UI Encountered an Issue">
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<LandingPage />} />

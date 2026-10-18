@@ -122,25 +122,20 @@ def _resolve_target_imagery(
                 print(f"[SatQuery API] Resolved {len(reg_paths)} file(s) for '{clean}' from registry")
                 return reg_paths
 
-        # Composite delimiter support: e.g. "t1.tif:::t2.tif" or "t1.tif,t2.tif"
+        # Composite delimiter support: e.g. "t1.tif:::t2.tif:::t3.tif" or "t1.tif,t2.tif,t3.tif"
         if ":::" in clean or "|||" in clean or ("," in clean and not clean.endswith(",")):
             sep = ":::" if ":::" in clean else "|||" if "|||" in clean else ","
             parts = [p.strip() for p in clean.split(sep) if p.strip()]
             if len(parts) >= 2:
-                p1 = _find_file(parts[0])
-                p2 = _find_file(parts[1])
-                if p1 and p2:
-                    print(f"[SatQuery API] Resolved bi-temporal pair from composite name: T1='{p1}', T2='{p2}'")
-                    return [p1, p2]
+                resolved_list = []
+                for pt in parts:
+                    f_pt = _find_file(pt)
+                    if f_pt:
+                        resolved_list.append(f_pt)
+                if len(resolved_list) >= 2:
+                    print(f"[SatQuery API] Resolved {len(resolved_list)} file(s) from composite name: {resolved_list}")
+                    return resolved_list
 
-        # Preset bi-temporal check: Bengaluru
-        if "bengaluru" in clean_lower and ("t1_t2" in clean_lower or "pair" in clean_lower or "urban" in clean_lower):
-            for sdir in extended_search_dirs:
-                t1 = sdir / "Bengaluru_T1_Pre.png"
-                t2 = sdir / "Bengaluru_T2_Post.png"
-                if t1.exists() and t2.exists():
-                    print(f"[SatQuery API] Resolved Bengaluru preset pair: T1='{t1}', T2='{t2}'")
-                    return [str(t1), str(t2)]
 
         # Preset bi-temporal check: Delhi
         if "delhi" in clean_lower and ("pair" in clean_lower or "temporal" in clean_lower or "change" in clean_lower):
@@ -613,20 +608,40 @@ async def upload_imagery(
             area_km = _calculate_area_sq_km(bounds, center_lat)
 
         sensor_name = sensor_type or info_t1.get("sensor", "Sentinel-2 (Optical)")
-        mode_val = "bi-temporal" if len(saved_paths) > 1 else "single"
+        mode_val = "multi-temporal" if len(saved_paths) > 2 else ("bi-temporal" if len(saved_paths) == 2 else "single")
         cache_bust = int(time.time())
         ds_id = f"ds_{cache_bust}"
         t1_fn = os.path.basename(saved_paths[0])
         t2_fn = os.path.basename(saved_paths[1]) if len(saved_paths) > 1 else None
+
+        # Build list of scenes for multi-temporal tracking
+        scenes_meta = []
+        for idx, sp in enumerate(saved_paths):
+            f_name = os.path.basename(sp)
+            pr = None
+            if idx == 0:
+                pr = prev_t1
+            elif idx == 1:
+                pr = prev_t2
+            else:
+                ov = gis_pipeline.build_web_overlay(sp, output_dir=str(TEMP_DIR))
+                pr = ov["png_name"] if ov else (_generate_raster_preview(Path(sp)) or f_name)
+            scenes_meta.append({
+                "step_index": idx,
+                "filename": f_name,
+                "image_url": f"/static/{pr}?t={cache_bust}",
+            })
 
         # Save into DATASET_REGISTRY for lookup in follow-up queries without re-uploading
         DATASET_REGISTRY[ds_id] = saved_paths
         DATASET_REGISTRY[t1_fn] = saved_paths
         if t2_fn:
             DATASET_REGISTRY[f"{t1_fn}:::{t2_fn}"] = saved_paths
+        all_comp_name = ":::".join(os.path.basename(p) for p in saved_paths)
+        DATASET_REGISTRY[all_comp_name] = saved_paths
 
-        comp_name = f"{t1_fn}:::{t2_fn}" if t2_fn else t1_fn
-        print(f"[SatQuery API] /imagery/upload saved {len(saved_paths)} image(s). Registered as '{ds_id}' and '{comp_name}'")
+        comp_name = all_comp_name if len(saved_paths) > 2 else (f"{t1_fn}:::{t2_fn}" if t2_fn else t1_fn)
+        print(f"[SatQuery API] /imagery/upload saved {len(saved_paths)} image(s). Registered as '{ds_id}' and '{comp_name}' (mode={mode_val})")
 
         from services.band_service import build_band_capability_contract
         t1_path = saved_paths[0]
@@ -658,8 +673,10 @@ async def upload_imagery(
             "t2_nir_image_url": t2_nir_url,
             "t1_filename": t1_fn,
             "t2_filename": t2_fn,
+            "scenes": scenes_meta,
             "band_contract": band_contract,
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Imagery ingestion error: {str(e)}")
 
@@ -768,4 +785,62 @@ def get_imagery_presets():
             "t1_image_url": "/static/Bengaluru_T1_Pre.png",
         },
     ]
+
+
+class CandidateAttributionRequest(BaseModel):
+    candidate: Dict[str, Any]
+    scene_paths: Optional[List[str]] = None
+    dataset_name: Optional[str] = None
+    dataset_id: Optional[str] = None
+    t1_filename: Optional[str] = None
+    t2_filename: Optional[str] = None
+    query: Optional[str] = None
+    force_refresh: bool = False
+
+
+@router.post("/candidates/{candidate_id}/attribution")
+async def get_candidate_attribution(
+    candidate_id: int,
+    req: CandidateAttributionRequest,
+):
+    """
+    Trajectory Change Captioning & Physical Attribution Endpoint (Upgrade 1).
+    Extracts the chronological visual triplet (T0 -> T_breakpoint -> Tk) and invokes
+    the fine-tuned Qwen3-VL model on GPU to synthesize an authoritative Attribution Dossier.
+    """
+    from services.trajectory_attribution_service import generate_candidate_attribution
+
+    active_paths = req.scene_paths or []
+    if not active_paths:
+        active_paths = _resolve_target_imagery(
+            dataset_name=req.dataset_name,
+            t1_filename=req.t1_filename,
+            t2_filename=req.t2_filename,
+            dataset_id=req.dataset_id,
+        )
+
+    if not active_paths:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not resolve satellite imagery for candidate attribution."
+        )
+
+    cand_dict = dict(req.candidate)
+    cand_dict["id"] = candidate_id
+
+    try:
+        dossier = generate_candidate_attribution(
+            candidate=cand_dict,
+            scene_paths=active_paths,
+            query=req.query,
+            force_refresh=req.force_refresh,
+        )
+        return dossier
+    except Exception as e:
+        print(f"[API] Attribution generation error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate trajectory attribution: {str(e)}"
+        )
+
 

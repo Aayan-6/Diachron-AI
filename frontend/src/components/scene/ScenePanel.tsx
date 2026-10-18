@@ -27,10 +27,11 @@ const SENSOR_TONE: Record<string, 'info' | 'warning' | 'violet' | 'default'> = {
 /** Local preview used while the backend is still ingesting the raster. */
 function buildLocalOverlay(files: File[]): SceneOverlay {
   const bounds: [number, number, number, number] = [77.618, 13.022, 77.652, 13.048];
+  const mode = files.length > 2 ? 'multi-temporal' : files.length === 2 ? 'bi-temporal' : 'single';
   return {
     name: files[0].name,
     sensor: 'Optical (pending ingest)',
-    mode: files.length > 1 ? 'bi-temporal' : 'single',
+    mode,
     bounds,
     center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2],
     crs: 'Unknown until ingested',
@@ -39,11 +40,20 @@ function buildLocalOverlay(files: File[]): SceneOverlay {
     t2ImageUrl: files[1] ? URL.createObjectURL(files[1]) : undefined,
     t1Filename: files[0].name,
     t2Filename: files[1]?.name,
+    scenes: files.map((f, idx) => ({
+      step_index: idx,
+      id: `local-${idx}`,
+      filename: f.name,
+      date: `T${idx + 1}`,
+      image_url: URL.createObjectURL(f),
+      imageUrl: URL.createObjectURL(f),
+      sensor: 'Optical',
+    })),
   };
 }
 
 export const ScenePanel: React.FC = () => {
-  const { dataset, overlay, setScene, clearScene, presets, presetsLoading, backendPhase } = useApp();
+  const { dataset, overlay, setScene, clearScene, presets, presetsLoading, backendPhase, activeSiteId, setActiveSiteId } = useApp();
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +61,7 @@ export const ScenePanel: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ingest = async (fileList: FileList | File[]) => {
-    const files = Array.from(fileList).slice(0, 2);
+    const files = Array.from(fileList).slice(0, 10);
     if (files.length === 0) return;
 
     setError(null);
@@ -61,11 +71,12 @@ export const ScenePanel: React.FC = () => {
     // Show something immediately; GeoTIFFs cannot be previewed in a browser, so
     // those wait for the server-rendered RGB thumbnail.
     const isTiff = /\.tiff?$/i.test(files[0].name);
+    const mode = files.length > 2 ? 'multi-temporal' : files.length === 2 ? 'bi-temporal' : 'single';
     const provisional: SceneDataset = {
-      name: files.length > 1 ? `${files[0].name}:::${files[1].name}` : files[0].name,
+      name: files.length > 1 ? files.map((f) => f.name).join(':::') : files[0].name,
       sizeLabel: formatBytes(files.reduce((sum, f) => sum + f.size, 0)),
       sensor: 'Pending ingest',
-      mode: files.length > 1 ? 'bi-temporal' : 'single',
+      mode,
       crs: '—',
       resolution: '—',
       files,
@@ -73,6 +84,15 @@ export const ScenePanel: React.FC = () => {
       georeferenced: false,
       t1Filename: files[0].name,
       t2Filename: files[1]?.name,
+      scenes: files.map((f, idx) => ({
+        step_index: idx,
+        id: `local-${idx}`,
+        filename: f.name,
+        date: `T${idx + 1}`,
+        image_url: URL.createObjectURL(f),
+        imageUrl: URL.createObjectURL(f),
+        sensor: 'Optical',
+      })),
     };
     setScene(provisional, isTiff ? null : buildLocalOverlay(files));
 
@@ -88,6 +108,16 @@ export const ScenePanel: React.FC = () => {
           'This file has no coordinate reference system, so it cannot be placed on the map. Questions about it will still work.'
         );
       }
+
+      const resolvedScenes = response.scenes?.map((s) => ({
+        step_index: s.step_index,
+        id: `scene-${s.step_index}`,
+        filename: s.filename,
+        date: s.filename,
+        image_url: resolveAssetUrl(s.image_url) ?? s.image_url,
+        imageUrl: resolveAssetUrl(s.image_url) ?? s.image_url,
+        sensor: response.sensor,
+      }));
 
       setScene(
         {
@@ -107,6 +137,7 @@ export const ScenePanel: React.FC = () => {
           t1Filename: response.t1_filename || files[0].name,
           t2Filename: response.t2_filename || files[1]?.name,
           bandContract: response.band_contract,
+          scenes: resolvedScenes,
         },
         placeable
           ? {
@@ -126,6 +157,7 @@ export const ScenePanel: React.FC = () => {
               bandContract: response.band_contract,
               t1NirImageUrl: resolveAssetUrl(response.t1_nir_image_url),
               t2NirImageUrl: resolveAssetUrl(response.t2_nir_image_url),
+              scenes: resolvedScenes,
             }
           : null
       );
@@ -185,10 +217,10 @@ export const ScenePanel: React.FC = () => {
           {busy ? <Loader2 size={17} className="animate-spin" /> : <UploadCloud size={17} />}
         </span>
         <span className="text-[13px] font-medium text-ink">
-          {busy ? 'Ingesting raster…' : 'Drop a GeoTIFF or a T1/T2 pair'}
+          {busy ? 'Ingesting raster…' : 'Drop GeoTIFFs, pair, or temporal series'}
         </span>
         <span className="font-mono text-[10px] text-ink-faint">
-          GeoTIFF · COG · PNG · JPEG — up to two files
+          GeoTIFF · COG · PNG · JPEG — up to 10 time series files
         </span>
       </div>
 
@@ -211,7 +243,9 @@ export const ScenePanel: React.FC = () => {
             <div className="flex min-w-0 items-center gap-2">
               <FileImage size={15} className="shrink-0 text-accent" aria-hidden />
               <span className="truncate font-mono text-[11.5px] text-ink" title={dataset.name}>
-                {dataset.t1Filename && dataset.t2Filename
+                {dataset.mode === 'multi-temporal'
+                  ? `${dataset.scenes?.length || dataset.files?.length || 'Time'} Observations: ${dataset.name.split(':::').join(' ➔ ')}`
+                  : dataset.t1Filename && dataset.t2Filename
                   ? `${dataset.t1Filename} + ${dataset.t2Filename}`
                   : dataset.name.includes(':::')
                   ? dataset.name.split(':::').join(' + ')
@@ -260,6 +294,63 @@ export const ScenePanel: React.FC = () => {
               </div>
             ))}
           </dl>
+
+          {dataset.sites && dataset.sites.length > 1 && (
+            <div className="mt-3 border-t border-line pt-2.5">
+              <span className="label-caps text-ink-faint block mb-1.5 flex items-center justify-between">
+                <span>Discovered Regional Sites ({dataset.sites.length})</span>
+                <span className="text-[9.5px] text-accent font-mono">Click to focus</span>
+              </span>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {dataset.sites.map((st) => {
+                  const isCurrent = activeSiteId ? st.site_id === activeSiteId : st.site_id === dataset.sites![0].site_id;
+                  return (
+                    <button
+                      key={st.site_id}
+                      type="button"
+                      onClick={() => setActiveSiteId(st.site_id)}
+                      className={cn(
+                        'w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-mono transition-all border cursor-pointer',
+                        isCurrent
+                          ? 'border-accent bg-accent/15 text-accent font-semibold shadow-[0_0_8px_rgba(0,242,255,0.2)]'
+                          : 'border-line bg-surface-2/60 text-ink-muted hover:border-accent/40 hover:text-ink'
+                      )}
+                    >
+                      <div className="min-w-0 flex items-center gap-1.5">
+                        <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', isCurrent ? 'bg-accent animate-pulse' : 'bg-ink-muted')} />
+                        <span className="truncate">{st.name}</span>
+                      </div>
+                      <span className="shrink-0 text-[10px] opacity-75">
+                        {st.scene_count} Epochs
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {dataset.mode === 'multi-temporal' && dataset.scenes && dataset.scenes.length > 0 && (
+            <div className="mt-3 border-t border-line pt-2.5">
+              <span className="label-caps text-ink-faint block mb-1.5">Temporal Stack ({dataset.scenes.length} Scenes)</span>
+              <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                {dataset.scenes.map((sc, idx) => (
+                  <div
+                    key={sc.id || idx}
+                    className="flex items-center justify-between gap-2 rounded bg-surface-2 px-2 py-1 text-[10.5px] font-mono"
+                  >
+                    <span className="flex items-center gap-1.5 text-accent font-semibold">
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                      T{idx + 1}
+                    </span>
+                    <span className="truncate text-ink-muted" title={sc.date || sc.acquisition_date || sc.filename}>
+                      {sc.date || sc.acquisition_date || sc.filename}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {overlay && (
             <p className="mt-2.5 border-t border-line pt-2 font-mono text-[10px] text-ink-faint">

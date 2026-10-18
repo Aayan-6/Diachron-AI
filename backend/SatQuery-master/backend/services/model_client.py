@@ -104,7 +104,8 @@ def query_model(
     image: Union[str, Path, Image.Image],
     prompt: str,
     geotiff_path: Optional[str] = None,
-    max_tokens: int = 256
+    max_tokens: int = 256,
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Unified query method. Automatically dispatches to either:
@@ -127,7 +128,7 @@ def query_model(
             payload = json.dumps({
                 "image": b64_img,
                 "prompt": prompt,  # Retains full prompt with tags for remote LLM
-                "system_instruction": lang_rule,
+                "system_instruction": system_prompt or lang_rule,
                 "max_tokens": max_tokens
             }).encode("utf-8")
 
@@ -183,7 +184,8 @@ def query_model(
             image=image,
             prompt=prompt,
             geotiff_path=geotiff_path,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
         )
         res["execution_mode"] = "local_gpu_cuda"
         return res

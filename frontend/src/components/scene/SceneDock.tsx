@@ -1,25 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsLeft, ChevronsRight, Images, Map as MapIcon, Terminal } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronsLeft, ChevronsRight, ClipboardCheck, Images, Map as MapIcon, Terminal } from 'lucide-react';
 import MapViewport from '../map/MapViewport';
 import { ScenePanel } from './ScenePanel';
 import { TracePanel } from './TracePanel';
+import { ReviewQueuePanel } from './ReviewQueuePanel';
 import { Segmented } from '../ui/Segmented';
 import { IconButton } from '../ui/Button';
-import { useApp, type DockTab } from '../../context/AppState';
+import { useApp } from '../../context/AppState';
 import { cn } from '../../lib/utils';
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 780;
 const DEFAULT_WIDTH = 460;
-const WIDTH_KEY = 'satquery.dockWidth';
+const WIDTH_KEY = 'diachron.dockWidth';
 
-const TABS = [
-  { value: 'map' as const, label: 'Map', icon: <MapIcon size={13} /> },
-  { value: 'trace' as const, label: 'Trace', icon: <Terminal size={13} /> },
-  { value: 'scene' as const, label: 'Scene', icon: <Images size={13} /> },
-];
-
-const COLLAPSED_TABS: Array<{ value: DockTab; label: string; icon: React.ReactNode }> = TABS;
 
 /**
  * Right-hand context dock. The map lives here rather than owning the screen:
@@ -27,8 +21,19 @@ const COLLAPSED_TABS: Array<{ value: DockTab; label: string; icon: React.ReactNo
  * to a thin strip when the answer is all that matters.
  */
 export const SceneDock: React.FC = () => {
-  const { dockOpen, setDockOpen, dockTab, setDockTab, dataset, overlay, focusedGeoJson, focusedOverlay } =
+  const { dockOpen, setDockOpen, dockTab, setDockTab, dataset, overlay, focusedGeoJson, focusedOverlay, focusedCandidates } =
     useApp();
+
+  const tabs = useMemo(() => [
+    { value: 'map' as const, label: 'Map', icon: <MapIcon size={13} /> },
+    {
+      value: 'review' as const,
+      label: focusedCandidates && focusedCandidates.length > 0 ? `Review (${focusedCandidates.length})` : 'Review',
+      icon: <ClipboardCheck size={13} />,
+    },
+    { value: 'trace' as const, label: 'Trace', icon: <Terminal size={13} /> },
+    { value: 'scene' as const, label: 'Scene', icon: <Images size={13} /> },
+  ], [focusedCandidates]);
 
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(WIDTH_KEY));
@@ -80,7 +85,7 @@ export const SceneDock: React.FC = () => {
           <ChevronsLeft size={15} />
         </IconButton>
         <div className="my-1 h-px w-5 bg-line" aria-hidden />
-        {COLLAPSED_TABS.map((tab) => (
+        {tabs.map((tab) => (
           <IconButton
             key={tab.value}
             label={tab.label}
@@ -122,7 +127,7 @@ export const SceneDock: React.FC = () => {
 
       <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-line px-2.5">
         <Segmented
-          options={TABS}
+          options={tabs}
           value={dockTab}
           onChange={setDockTab}
           size="xs"
@@ -162,6 +167,11 @@ export const SceneDock: React.FC = () => {
           />
         </div>
 
+        {dockTab === 'review' && (
+          <div className="absolute inset-0 flex flex-col bg-surface">
+            <ReviewQueuePanel />
+          </div>
+        )}
         {dockTab === 'trace' && (
           <div className="absolute inset-0 flex flex-col bg-surface">
             <TracePanel />

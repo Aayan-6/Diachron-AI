@@ -93,7 +93,7 @@ const SettingsPage: React.FC = () => {
             </div>
 
             <dl className="grid gap-4 sm:grid-cols-2">
-              <Field label="Model" value={backendStatus.model_engine.model_name ?? 'Qwen3-VL-2B-SatQuery'} />
+              <Field label="Model" value={backendStatus.model_engine.model_name ?? 'Qwen3-VL-2B-Diachron'} />
               <Field
                 label="Trained Modalities"
                 value={

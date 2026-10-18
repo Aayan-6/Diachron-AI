@@ -33,10 +33,10 @@ const Login: React.FC<LoginProps> = ({ mode = 'login' }) => {
             <Globe2 size={21} />
           </span>
           <h1 className="text-xl font-semibold tracking-tight text-ink">
-            {isLogin ? 'Sign in to SatQuery' : 'Create an account'}
+            {isLogin ? 'Sign in to Diachron AI' : 'Create an account'}
           </h1>
           <p className="mt-1.5 text-[13px] text-ink-muted">
-            Agentic analysis for satellite and SAR imagery.
+            Semantic retrieval and multi-temporal change intelligence.
           </p>
         </div>
 

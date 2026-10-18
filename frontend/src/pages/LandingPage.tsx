@@ -26,7 +26,7 @@ const LandingPage: React.FC = () => (
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent/10 text-accent">
             <Globe2 size={15} />
           </span>
-          SatQuery <span className="text-accent">AI</span>
+          Diachron <span className="text-accent">AI</span>
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex" aria-label="Sections">

@@ -243,3 +243,131 @@ export function aoiPairResponseToSceneOverlay(res: FetchBiTemporalAOIResponse): 
     bandContract: res.band_contract,
   };
 }
+
+export interface FetchTemporalStackRequest {
+  bbox: [number, number, number, number];
+  sensor: 'sentinel-2' | 'sentinel-1';
+  max_cloud_cover?: number;
+  date_range?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  max_scenes?: number;
+  min_interval_days?: number;
+}
+
+export interface FetchTemporalStackResponse {
+  status: 'success' | 'partial' | 'error';
+  sensor: string;
+  bbox: [number, number, number, number];
+  area_sq_km: number;
+  n_scenes: number;
+  count?: number;
+  date_span_days: number;
+  scenes: {
+    step_index: number;
+    scene_id: string;
+    acquisition_date: string;
+    date?: string;
+    cloud_cover?: number | null;
+    filename: string;
+    image_url: string;
+    imageUrl?: string;
+    nir_image_url?: string;
+    nirImageUrl?: string;
+    crs?: string;
+    wgs84_bounds?: [number, number, number, number];
+  }[];
+  suggested_queries?: string[];
+}
+
+export async function fetchAOITemporalStack(req: FetchTemporalStackRequest): Promise<FetchTemporalStackResponse> {
+  const targetDateRange =
+    req.date_range ||
+    (req.start_date && req.end_date ? `${req.start_date}T00:00:00Z/${req.end_date}T23:59:59Z` : undefined);
+
+  const payload = {
+    ...req,
+    date_range: targetDateRange,
+  };
+
+  const res = await fetch(`${API_BASE_URL}/interactive-map/fetch-temporal-stack`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    let errorDetail = `HTTP ${res.status}`;
+    try {
+      const errJson = await res.json();
+      errorDetail = errJson.detail || errorDetail;
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+
+  return res.json();
+}
+
+export function aoiStackResponseToSceneDataset(res: FetchTemporalStackResponse): SceneDataset {
+  const firstScene = res.scenes[0];
+  const lastScene = res.scenes[res.scenes.length - 1];
+  const compName = res.scenes.map((s) => s.filename).join(':::');
+  return {
+    name: compName,
+    sizeLabel: `${res.scenes.length} scenes · ${res.date_span_days}d`,
+    sensor: res.sensor,
+    mode: 'multi-temporal',
+    crs: firstScene?.crs || 'EPSG:4326 (WGS84)',
+    resolution: '10.0m GSD',
+    syncedWithBackend: true,
+    georeferenced: true,
+    areaSqKm: res.area_sq_km,
+    datasetId: `stack_${Date.now()}`,
+    t1Filename: firstScene?.filename,
+    t2Filename: lastScene?.filename,
+    scenes: res.scenes.map((s) => ({
+      step_index: s.step_index,
+      filename: s.filename,
+      image_url: resolveAssetUrl(s.image_url) ?? s.image_url,
+      acquisition_date: s.acquisition_date,
+    })),
+  };
+}
+
+export function aoiStackResponseToSceneOverlay(res: FetchTemporalStackResponse): SceneOverlay {
+  const firstScene = res.scenes[0];
+  const lastScene = res.scenes[res.scenes.length - 1];
+  const b = firstScene?.wgs84_bounds || res.bbox;
+  const center: [number, number] = [
+    roundCoord((b[0] + b[2]) / 2),
+    roundCoord((b[1] + b[3]) / 2),
+  ];
+  return {
+    datasetId: `stack_${Date.now()}`,
+    name: `AOI Multi-Temporal (${res.scenes.length} Scenes)`,
+    sensor: res.sensor,
+    mode: 'multi-temporal',
+    bounds: b,
+    center,
+    crs: firstScene?.crs || 'EPSG:4326',
+    resolution: '10.0m GSD',
+    areaSqKm: res.area_sq_km,
+    t1ImageUrl: resolveAssetUrl(firstScene?.image_url) ?? (firstScene?.image_url || ''),
+    t2ImageUrl: resolveAssetUrl(lastScene?.image_url) ?? (lastScene?.image_url || ''),
+    t1Filename: firstScene?.filename,
+    t2Filename: lastScene?.filename,
+    scenes: res.scenes.map((s) => ({
+      step_index: s.step_index,
+      filename: s.filename,
+      image_url: resolveAssetUrl(s.image_url) ?? s.image_url,
+      acquisition_date: s.acquisition_date,
+    })),
+  };
+}
+
+function roundCoord(v: number): number {
+  return Math.round(v * 1000000) / 1000000;
+}
+

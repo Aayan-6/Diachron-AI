@@ -1,8 +1,9 @@
-import React from 'react';
-import { Download, PanelRight, RefreshCcw, SquarePen } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, Download, PanelRight, RefreshCcw, SquarePen } from 'lucide-react';
 import ChatThread from '../components/chat/ChatThread';
 import Composer from '../components/chat/Composer';
 import SceneDock from '../components/scene/SceneDock';
+import { SystemTelemetryModal } from '../components/scene/SystemTelemetryModal';
 import { Badge } from '../components/ui/Badge';
 import { IconButton } from '../components/ui/Button';
 import { LanguageSelector } from '../components/ui/LanguageSelector';
@@ -48,6 +49,7 @@ const BackendBadge: React.FC = () => {
 const Workspace: React.FC = () => {
   const { dockOpen, setDockOpen, resetConversation, messages, refreshBackend, backendPhase } =
     useApp();
+  const [telemetryOpen, setTelemetryOpen] = useState(false);
 
   const handlePrint = () => {
     // Determine a title for the report based on the first message
@@ -60,8 +62,17 @@ const Workspace: React.FC = () => {
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface/60 px-4">
           <div className="flex min-w-0 items-center gap-2.5">
-            <h1 className="text-[13px] font-medium text-ink">SatQuery workspace</h1>
+            <h1 className="text-[13px] font-medium text-ink">Diachron AI workspace</h1>
             <BackendBadge />
+            <button
+              type="button"
+              onClick={() => setTelemetryOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] font-medium rounded-full border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-all cursor-pointer shadow-sm ml-1"
+              title="Open ISRO PS 26167 §2.3 System Telemetry & Evaluation Dashboard"
+            >
+              <Activity size={12} className="text-accent" />
+              <span>Telemetry (§2.3)</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -104,6 +115,7 @@ const Workspace: React.FC = () => {
       </section>
 
       <SceneDock />
+      <SystemTelemetryModal isOpen={telemetryOpen} onClose={() => setTelemetryOpen(false)} />
     </div>
   );
 };

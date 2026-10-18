@@ -34,8 +34,9 @@ const STAGE_RULES: StageRule[] = [
       /inference/i,
       /changeformer/i,
       /change detective/i,
-      /\bvqa\b/i,
-      /grounding/i,
+      /archive-wide/i,
+      /semantic retrieval/i,
+      /clustering/i,
       /extracted geographic bounds/i,
       /detected/i,
     ],
@@ -60,10 +61,11 @@ const STAGE_RULES: StageRule[] = [
 
 const TOOL_RULES: Array<[RegExp, string]> = [
   [/changeformer|change detective/i, 'ChangeFormerV6'],
-  [/\bvqa\b/i, 'Qwen3-VL (VQA)'],
-  [/grounding/i, 'Qwen3-VL (Grounding)'],
-  [/gis metadata|coordinate engine|geospatial header|co-?registration|rasterio|gdal/i, 'GIS pipeline'],
-  [/agentic controller|classified intent|received query/i, 'Agentic controller'],
+  [/archive|semantic retrieval|remoteclip|spherical k-means/i, 'Semantic Archive Indexer'],
+  [/multi-temporal|trajectory|onset date|breakpoint/i, 'Multi-Temporal Engine'],
+  [/gis metadata|coordinate engine|geospatial header|co-?registration|rasterio|gdal/i, 'GIS Pipeline'],
+  [/quality|masking|radiometric|scl|conflation/i, 'False-Alarm Mitigator'],
+  [/agentic controller|classified intent|received query/i, 'Agentic Controller'],
 ];
 
 function classifyStage(line: string): TraceStage {

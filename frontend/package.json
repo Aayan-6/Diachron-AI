@@ -1,9 +1,9 @@
 {
-  "name": "satquery-ai-frontend",
+  "name": "diachron-ai-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "SatQuery AI - chat-first workspace for agentic satellite & SAR analysis (SIH 2026, PS 26167, ISRO). Talks to the FastAPI backend over /api/v1.",
+  "description": "Diachron AI - Semantic retrieval and multi-temporal change intelligence for satellite archives (ISRO PS2). Talks to the FastAPI backend over /api/v1.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

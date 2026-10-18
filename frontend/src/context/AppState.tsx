@@ -12,6 +12,7 @@ import {
   countEvidenceFeatures,
   extractGeoJson,
   extractImageOverlay,
+  extractAllImageOverlays,
   extractTraceLines,
   fetchImageryPresets,
   fetchSystemStatus,
@@ -22,16 +23,23 @@ import {
 } from '../lib/api';
 import { parseTrace, sumAreaHa } from '../lib/trace';
 import type {
+  AnalystDecision,
+  AnalystVerdict,
   AOITemporalState,
   BackendPhase,
+  CandidateAttributionDossier,
+  ChangeCandidate,
   ChatMessage,
   ImageOverlayEvidence,
+  ProvenanceRecord,
   SceneDataset,
   SceneOverlay,
   Session,
+  TimelineObservation,
   TraceStep,
 } from '../lib/types';
 import { useLanguage } from './LanguageContext';
+
 
 /* -------------------------------------------------------------------------- */
 /* Fallback demo scenes                                                       */
@@ -42,20 +50,6 @@ import { useLanguage } from './LanguageContext';
  * something to show. Paths are relative so they resolve through the dev proxy.
  */
 const FALLBACK_PRESETS: ImageryPreset[] = [
-  {
-    id: 'bengaluru_urban_pair',
-    name: 'Bengaluru_Urban_Corridor_T1_T2.tif',
-    displayName: 'Bengaluru Urban Corridor',
-    sensor: 'Optical (Sentinel-2)',
-    mode: 'bi-temporal',
-    wgs84_bounds: [77.618, 13.022, 77.652, 13.048],
-    center: [77.635, 13.035],
-    crs: 'EPSG:4326 (WGS84)',
-    resolution: '10.0m GSD',
-    area_sq_km: 10.5,
-    t1_image_url: '/static/Bengaluru_T1_Pre.png',
-    t2_image_url: '/static/Bengaluru_T2_Post.png',
-  },
   {
     id: 'delhi_temporal',
     name: 'Delhi_MultiYear_2018_2026_Pair.tif',
@@ -69,19 +63,6 @@ const FALLBACK_PRESETS: ImageryPreset[] = [
     area_sq_km: 124.5,
     t1_image_url: '/static/prev_east_delhi_2018_S2.png',
     t2_image_url: '/static/prev_delhi_20260112_S2.png',
-  },
-  {
-    id: 'mangalore_sar',
-    name: 'Mangalore_Harbor_SAR_VV.tif',
-    displayName: 'Mangalore Port (SAR)',
-    sensor: 'SAR (Sentinel-1)',
-    mode: 'single',
-    wgs84_bounds: [74.78, 12.85, 74.88, 12.95],
-    center: [74.83, 12.9],
-    crs: 'EPSG:4326 (WGS84)',
-    resolution: '10.0m GSD',
-    area_sq_km: 118.2,
-    t1_image_url: '/static/Mangalore_SAR_VV.png',
   },
 ];
 
@@ -142,7 +123,7 @@ export function presetToDataset(preset: ImageryPreset): SceneDataset {
 /* Context shape                                                               */
 /* -------------------------------------------------------------------------- */
 
-export type DockTab = 'map' | 'trace' | 'scene';
+export type DockTab = 'map' | 'trace' | 'scene' | 'review';
 
 interface AppStateValue {
   /* backend */
@@ -183,6 +164,25 @@ interface AppStateValue {
   focusEvidence: (messageId: string) => void;
   clearFocus: () => void;
 
+  /* multi-temporal timeline */
+  focusedTimeline: TimelineObservation[] | null;
+  focusedCandidates: ChangeCandidate[] | null;
+  activeTimelineStep: number;
+  setActiveTimelineStep: (step: number) => void;
+
+  /* multi-site spatial clusters */
+  activeSiteId: string | null;
+  setActiveSiteId: (siteId: string) => void;
+
+  /* analyst review & provenance (PS2 §2.2.5) */
+  analystReviews: Record<string, AnalystDecision>;
+  setAnalystVerdict: (candidateId: number | string, verdict: AnalystVerdict, notes?: string) => void;
+  resetAnalystVerdict: (candidateId: number | string) => void;
+  focusedCandidateId: number | string | null;
+  setFocusedCandidateId: (id: number | string | null) => void;
+  focusedProvenance: ProvenanceRecord | null;
+  setCandidateAttribution: (candidateId: number | string, dossier: CandidateAttributionDossier) => void;
+
   /* trace inspection */
   activeTrace: TraceStep[];
   selectedStep: TraceStep | null;
@@ -206,8 +206,9 @@ interface AppStateValue {
 
 const AppStateContext = createContext<AppStateValue | undefined>(undefined);
 
-const MESSAGES_KEY = 'satquery.messages.v2';
-const SESSIONS_KEY = 'satquery.sessions.v2';
+const MESSAGES_KEY = 'diachron.messages.v2';
+const SESSIONS_KEY = 'diachron.sessions.v2';
+const REVIEWS_KEY = 'diachron.analyst_reviews.v1';
 
 function loadPersisted<T>(key: string, fallback: T): T {
   try {
@@ -263,12 +264,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     check();
-    const interval = setInterval(check, backendPhase === 'offline' ? 5000 : 30000);
+    const interval = setInterval(check, 30000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [healthNonce, backendPhase]);
+  }, [healthNonce]);
 
   const refreshBackend = useCallback(() => {
     setBackendPhase('checking');
@@ -297,15 +298,56 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   /* --- active scene ------------------------------------------------------ */
   const [dataset, setDataset] = useState<SceneDataset | null>(null);
   const [overlay, setOverlay] = useState<SceneOverlay | null>(null);
+  const [activeSiteId, setActiveSiteIdState] = useState<string | null>(null);
 
   const setScene = useCallback((next: SceneDataset | null, nextOverlay: SceneOverlay | null) => {
     setDataset(next);
     setOverlay(nextOverlay);
+    if (nextOverlay?.activeSiteId) {
+      setActiveSiteIdState(nextOverlay.activeSiteId);
+    } else if (nextOverlay?.sites && nextOverlay.sites.length > 0) {
+      setActiveSiteIdState(nextOverlay.sites[0].site_id);
+    } else {
+      setActiveSiteIdState(null);
+    }
+  }, []);
+
+  const setActiveSiteId = useCallback((siteId: string) => {
+    setActiveSiteIdState(siteId);
+    setOverlay((prev) => {
+      if (!prev || !prev.sites) return prev;
+      const targetSite = prev.sites.find((s) => s.site_id === siteId);
+      if (!targetSite) return prev;
+      return {
+        ...prev,
+        activeSiteId: siteId,
+        name: targetSite.name,
+        bounds: targetSite.bounds,
+        center: targetSite.center,
+        t1ImageUrl: targetSite.t1ImageUrl || targetSite.scenes[0]?.image_url || prev.t1ImageUrl,
+        t2ImageUrl: targetSite.t2ImageUrl || targetSite.scenes[targetSite.scenes.length - 1]?.image_url || prev.t2ImageUrl,
+        scenes: targetSite.scenes,
+      };
+    });
+    setDataset((prev) => {
+      if (!prev || !prev.sites) return prev;
+      const targetSite = prev.sites.find((s) => s.site_id === siteId);
+      if (!targetSite) return prev;
+      return {
+        ...prev,
+        activeSiteId: siteId,
+        name: targetSite.name,
+        sizeLabel: `${targetSite.scenes.length} Epochs`,
+        scenes: targetSite.scenes,
+      };
+    });
+    setActiveTimelineStep(0);
   }, []);
 
   const clearScene = useCallback(() => {
     setDataset(null);
     setOverlay(null);
+    setActiveSiteIdState(null);
   }, []);
 
   /* --- AOI bi-temporal analysis state ------------------------------------ */
@@ -409,6 +451,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   /* --- evidence focus ---------------------------------------------------- */
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
+  const [activeTimelineStep, setActiveTimelineStep] = useState<number>(0);
 
   /* --- dock -------------------------------------------------------------- */
   const [dockOpen, setDockOpen] = useState(true);
@@ -468,7 +511,70 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         const geoJson = extractGeoJson(response);
         const overlay = extractImageOverlay(response);
+        const allOverlays = extractAllImageOverlays(response);
         const trace = parseTrace(extractTraceLines(response), assistantId);
+
+        // Auto-mount autonomous retrieval scene overlay (satellite photo & timeline)
+        if (response.scene_overlay) {
+          const resolvedSites = response.scene_overlay.sites?.map((st) => ({
+            ...st,
+            t1ImageUrl: resolveAssetUrl(st.t1ImageUrl) || st.t1ImageUrl,
+            t2ImageUrl: resolveAssetUrl(st.t2ImageUrl) || st.t2ImageUrl,
+            scenes: st.scenes.map((s) => ({
+              ...s,
+              image_url: resolveAssetUrl(s.image_url || s.imageUrl) || s.image_url || s.imageUrl,
+              imageUrl: resolveAssetUrl(s.imageUrl || s.image_url) || s.imageUrl || s.image_url,
+              nir_image_url: resolveAssetUrl(s.nir_image_url || s.nirImageUrl) || s.nir_image_url || s.nirImageUrl,
+              nirImageUrl: resolveAssetUrl(s.nirImageUrl || s.nir_image_url) || s.nirImageUrl || s.nir_image_url,
+            })),
+            timeline: st.timeline?.map((t) => ({
+              ...t,
+              image_url: resolveAssetUrl(t.image_url) || t.image_url,
+              imageUrl: resolveAssetUrl(t.image_url) || t.image_url,
+              overlay_url: resolveAssetUrl(t.overlay_url) || t.overlay_url,
+            })),
+          }));
+
+          const autoOv: SceneOverlay = {
+            ...response.scene_overlay,
+            t1ImageUrl: resolveAssetUrl(response.scene_overlay.t1ImageUrl) || response.scene_overlay.t1ImageUrl,
+            t2ImageUrl: resolveAssetUrl(response.scene_overlay.t2ImageUrl) || response.scene_overlay.t2ImageUrl,
+            t1NirImageUrl: resolveAssetUrl(response.scene_overlay.t1NirImageUrl) || response.scene_overlay.t1NirImageUrl,
+            t2NirImageUrl: resolveAssetUrl(response.scene_overlay.t2NirImageUrl) || response.scene_overlay.t2NirImageUrl,
+            sites: resolvedSites,
+            activeSiteId: response.scene_overlay.activeSiteId || resolvedSites?.[0]?.site_id,
+            scenes: response.scene_overlay.scenes?.map((s) => ({
+              ...s,
+              image_url: resolveAssetUrl(s.image_url || s.imageUrl) || s.image_url || s.imageUrl,
+              imageUrl: resolveAssetUrl(s.imageUrl || s.image_url) || s.imageUrl || s.image_url,
+              nir_image_url: resolveAssetUrl(s.nir_image_url || s.nirImageUrl) || s.nir_image_url || s.nirImageUrl,
+              nirImageUrl: resolveAssetUrl(s.nirImageUrl || s.nir_image_url) || s.nirImageUrl || s.nir_image_url,
+            })),
+          };
+
+          const autoDataset: SceneDataset = {
+            name: autoOv.name,
+            sizeLabel: `${autoOv.scenes?.length || 0} Epochs`,
+            sensor: autoOv.sensor,
+            mode: (autoOv.mode as any) || 'multi-temporal',
+            crs: autoOv.crs || 'EPSG:4326',
+            resolution: autoOv.resolution || '10.0m GSD',
+            syncedWithBackend: true,
+            georeferenced: true,
+            datasetId: autoOv.datasetId,
+            scenes: autoOv.scenes,
+            sites: resolvedSites,
+            activeSiteId: autoOv.activeSiteId,
+          };
+          setScene(autoDataset, autoOv);
+          if (autoOv.activeSiteId) {
+            setActiveSiteIdState(autoOv.activeSiteId);
+          }
+        }
+
+        if (response.timeline && response.timeline.length > 0) {
+          setActiveTimelineStep(response.timeline.length - 1);
+        }
 
         patchMessage(assistantId, {
           content:
@@ -483,18 +589,23 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             featureCount: countEvidenceFeatures(response),
             areaHa: sumAreaHa(geoJson),
             overlay,
+            allOverlays,
+            timeline: response.timeline,
+            candidates: response.candidates,
+            provenance: response.provenance,
           },
         });
 
         // Point the map at this answer, or clear it — leaving the previous
         // answer's polygons up would attribute them to the wrong reply.
-        const hasMapEvidence = Boolean(geoJson) || Boolean(overlay);
+        const hasMapEvidence = Boolean(geoJson) || Boolean(overlay) || Boolean(response.scene_overlay);
         setFocusedMessageId(hasMapEvidence ? assistantId : null);
         if (hasMapEvidence) {
           setDockTab('map');
           setDockOpen(true);
         }
       } catch (err) {
+
         const cancelled = controller.signal.aborted;
         if (cancelled) {
           patchMessage(assistantId, {
@@ -640,17 +751,38 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const clearFocus = useCallback(() => setFocusedMessageId(null), []);
 
-  /* --- derived ----------------------------------------------------------- */
-
+  /* --- derived --------------------------------------------------------- */
   const focusedGeoJson = useMemo(() => {
     if (!focusedMessageId) return null;
     return messages.find((m) => m.id === focusedMessageId)?.evidence?.geoJson ?? null;
   }, [focusedMessageId, messages]);
 
+  const focusedTimeline = useMemo(() => {
+    if (overlay?.sites && activeSiteId) {
+      const activeSite = overlay.sites.find((s) => s.site_id === activeSiteId);
+      if (activeSite?.timeline && activeSite.timeline.length > 0) {
+        return activeSite.timeline;
+      }
+    }
+    if (!focusedMessageId) return null;
+    return messages.find((m) => m.id === focusedMessageId)?.evidence?.timeline ?? null;
+  }, [focusedMessageId, messages, overlay, activeSiteId]);
+
+  const focusedCandidates = useMemo(() => {
+    if (!focusedMessageId) return null;
+    return messages.find((m) => m.id === focusedMessageId)?.evidence?.candidates ?? null;
+  }, [focusedMessageId, messages]);
+
   const focusedOverlay = useMemo(() => {
     if (!focusedMessageId) return null;
-    return messages.find((m) => m.id === focusedMessageId)?.evidence?.overlay ?? null;
-  }, [focusedMessageId, messages]);
+    const msg = messages.find((m) => m.id === focusedMessageId);
+    if (!msg?.evidence) return null;
+    if (msg.evidence.allOverlays && msg.evidence.allOverlays.length > 0 && activeTimelineStep > 0) {
+      const stepOverlay = msg.evidence.allOverlays.find((ov) => ov.label?.includes(`T${activeTimelineStep}`));
+      if (stepOverlay) return stepOverlay;
+    }
+    return msg.evidence.overlay ?? null;
+  }, [focusedMessageId, messages, activeTimelineStep]);
 
   const activeTrace = useMemo(() => {
     const focused = focusedMessageId ? messages.find((m) => m.id === focusedMessageId) : null;
@@ -660,6 +792,83 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (trace?.length) return trace;
     }
     return [];
+  }, [focusedMessageId, messages]);
+
+  /* --- analyst review state (PS2 §2.2.5) --------------------------------- */
+  const [analystReviews, setAnalystReviews] = useState<Record<string, AnalystDecision>>(() => {
+    try {
+      const stored = localStorage.getItem(REVIEWS_KEY);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [focusedCandidateId, setFocusedCandidateId] = useState<number | string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(REVIEWS_KEY, JSON.stringify(analystReviews));
+    } catch {
+      /* ignore */
+    }
+  }, [analystReviews]);
+
+  const setAnalystVerdict = useCallback((candidateId: number | string, verdict: AnalystVerdict, notes?: string) => {
+    const key = String(candidateId);
+    setAnalystReviews((prev) => {
+      const existing = prev[key];
+      const updated: AnalystDecision = {
+        candidate_id: candidateId,
+        verdict,
+        notes: notes !== undefined ? notes : existing?.notes || '',
+        reviewed_at: new Date().toISOString(),
+        analyst_id: 'analyst_1',
+      };
+      return { ...prev, [key]: updated };
+    });
+  }, []);
+
+  const resetAnalystVerdict = useCallback((candidateId: number | string) => {
+    const key = String(candidateId);
+    setAnalystReviews((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const setCandidateAttribution = useCallback((candidateId: number | string, dossier: CandidateAttributionDossier) => {
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.evidence?.candidates) {
+          const updated = m.evidence.candidates.map((c) => {
+            if (String(c.id) === String(candidateId)) {
+              return { ...c, attribution_dossier: dossier };
+            }
+            return c;
+          });
+          return {
+            ...m,
+            evidence: {
+              ...m.evidence,
+              candidates: updated,
+            },
+          };
+        }
+        return m;
+      })
+    );
+  }, []);
+
+  const focusedProvenance = useMemo(() => {
+    if (!focusedMessageId) {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        if (messages[i].evidence?.provenance) return messages[i].evidence!.provenance!;
+      }
+      return null;
+    }
+    return messages.find((m) => m.id === focusedMessageId)?.evidence?.provenance ?? null;
   }, [focusedMessageId, messages]);
 
   const value = useMemo<AppStateValue>(
@@ -689,6 +898,19 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       focusedMessageId,
       focusEvidence,
       clearFocus,
+      focusedTimeline,
+      focusedCandidates,
+      activeTimelineStep,
+      setActiveTimelineStep,
+      activeSiteId,
+      setActiveSiteId,
+      analystReviews,
+      setAnalystVerdict,
+      resetAnalystVerdict,
+      focusedCandidateId,
+      setFocusedCandidateId,
+      focusedProvenance,
+      setCandidateAttribution,
       activeTrace,
       selectedStep,
       setSelectedStep,
@@ -730,6 +952,17 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       focusedMessageId,
       focusEvidence,
       clearFocus,
+      focusedTimeline,
+      focusedCandidates,
+      activeTimelineStep,
+      activeSiteId,
+      setActiveSiteId,
+      analystReviews,
+      setAnalystVerdict,
+      resetAnalystVerdict,
+      focusedCandidateId,
+      focusedProvenance,
+      setCandidateAttribution,
       activeTrace,
       selectedStep,
       dockOpen,
@@ -741,7 +974,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       renameSession,
       deleteSession,
     ]
-
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Globe2, History, LogOut, Map as MapIcon, MessagesSquare, Settings, User } from 'lucide-react';
+import { Activity, Globe2, History, LogOut, Map as MapIcon, MessagesSquare, Settings, User } from 'lucide-react';
 import HistoryPanel from '../history/HistoryPanel';
+import { SystemTelemetryModal } from '../scene/SystemTelemetryModal';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppState';
 import { describeCompute } from '../../lib/api';
@@ -88,6 +89,7 @@ const BackendDot: React.FC = () => {
  */
 const AppShell: React.FC = () => {
   const { historyOpen, setHistoryOpen } = useApp();
+  const [telemetryOpen, setTelemetryOpen] = useState(false);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-ground text-ink">
@@ -97,7 +99,7 @@ const AppShell: React.FC = () => {
       >
         <NavLink
           to="/"
-          aria-label="SatQuery home"
+          aria-label="Diachron AI home"
           className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent transition-colors hover:bg-accent/20"
         >
           <Globe2 size={19} />
@@ -125,6 +127,15 @@ const AppShell: React.FC = () => {
         </button>
 
         <div className="mt-auto flex flex-col items-center gap-1">
+          <button
+            type="button"
+            aria-label="System Telemetry (§2.3)"
+            onClick={() => setTelemetryOpen(true)}
+            className="group relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl text-ink-faint transition-colors hover:bg-accent/15 hover:text-accent"
+          >
+            <Activity size={18} />
+            <RailTooltip>System Telemetry (§2.3)</RailTooltip>
+          </button>
           <BackendDot />
           <div className="my-1 h-px w-6 bg-line" aria-hidden />
           {SECONDARY.map((item) => (
@@ -146,6 +157,8 @@ const AppShell: React.FC = () => {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Outlet />
       </main>
+
+      <SystemTelemetryModal isOpen={telemetryOpen} onClose={() => setTelemetryOpen(false)} />
     </div>
   );
 };

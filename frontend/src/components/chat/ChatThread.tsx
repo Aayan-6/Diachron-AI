@@ -20,37 +20,36 @@ interface StarterGroup {
  */
 const STARTERS: StarterGroup[] = [
   {
-    id: 'vqa',
+    id: 'semantic_retrieval',
     icon: <ScanSearch size={15} />,
-    title: 'Describe the scene',
+    title: 'Semantic Archive Search',
     tone: 'text-teal',
     prompts: [
-      'What land cover types dominate this scene?',
-      'Is this area suitable for growing sugarcane?',
-      'Summarise the vegetation health visible here.',
+      'Search for newly built structures near a river.',
+      'Find large vehicle concentrations on open ground.',
+      'Where are dense urban settlements across the archive?',
     ],
   },
   {
-    id: 'grounding',
+    id: 'multitemporal_change',
+    icon: <GitCompareArrows size={15} />,
+    title: 'Multi-Temporal Change',
+    tone: 'text-amber',
+    prompts: [
+      'When did change first appear in this area?',
+      'Detect construction and land clearance between 2018 and 2026.',
+      'Show me where water bodies expanded or dried up.',
+    ],
+  },
+  {
+    id: 'trajectory_taxonomy',
     icon: <Compass size={15} />,
-    title: 'Locate features',
+    title: 'Trajectory & Taxonomy',
     tone: 'text-violet',
     prompts: [
-      'Find the industrial storage tanks in this scene.',
-      'Where are the water bodies?',
-      'Outline the built-up areas.',
-    ],
-  },
-  {
-    id: 'change',
-    icon: <GitCompareArrows size={15} />,
-    title: 'Compare over time',
-    tone: 'text-amber',
-    biTemporalOnly: true,
-    prompts: [
-      'How much built-up area was added between these dates?',
-      'What changed most between T1 and T2?',
-      'Show me where vegetation was lost.',
+      'Classify detected changes into infrastructure vs land clearance.',
+      'Trace chronological trajectory across all historical passes.',
+      'Pinpoint earliest onset date with verified usable imagery.',
     ],
   },
 ];

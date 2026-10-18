@@ -184,7 +184,7 @@ export const AOIChatbotHandoff: React.FC<AOIChatbotHandoffProps> = ({
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-space-black shadow-[0_0_15px_rgba(0,242,255,0.3)] hover:bg-accent/90 transition-all cursor-pointer"
             >
               <Bot size={14} />
-              <span>{isBiTemporal ? 'Workspace Console' : 'Analyze with SatQuery AI'}</span>
+              <span>{isBiTemporal ? 'Workspace Console' : 'Analyze with Diachron AI'}</span>
               <ArrowRight size={13} />
             </button>
           </div>

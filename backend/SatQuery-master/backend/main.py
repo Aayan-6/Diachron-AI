@@ -14,11 +14,30 @@ from core.config import HOST, PORT, MODEL_SERVICE_URL, get_lan_ip, CORS_ORIGINS
 from api.routes import router as satquery_router
 from api.auth_routes import router as auth_router
 from api.conversation_routes import router as conversation_router
+from api.archive_routes import router as archive_router
+from api.export_routes import router as export_router
+from api.feedback_routes import router as feedback_router
+from api.telemetry_routes import router as telemetry_router
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Auto-create SQLite / relational tables if not present
+    try:
+        from db.base import Base
+        from db.session import engine
+        import models  # noqa: F401
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"[Warning] Could not initialize database schema: {e}")
+    yield
 
 app = FastAPI(
-    title="SatQuery AI Backend",
+    title="Diachron AI Backend",
     description="Central Agentic Controller for Satellite Remote Sensing (SIH 2026 / ISRO PS 26167)",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS so local Vite dev server and remote hosts can make credentialed requests
@@ -34,6 +53,10 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversation_router, prefix="/api/v1")
 app.include_router(satquery_router, prefix="/api/v1")
+app.include_router(archive_router, prefix="/api/v1/archive", tags=["Archive & Semantic Search"])
+app.include_router(export_router, prefix="/api/v1/export", tags=["Analyst Export & Audit"])
+app.include_router(feedback_router, prefix="/api/v1/feedback", tags=["Analyst Feedback & Subsequent Reranking"])
+app.include_router(telemetry_router, prefix="/api/v1/system", tags=["System Telemetry & ISRO §2.3 Benchmarks"])
 
 # Feature: Interactive Map STAC/COG AOI Streamer (Phase 2)
 ENABLE_INTERACTIVE_MAP = True
@@ -44,12 +67,8 @@ if ENABLE_INTERACTIVE_MAP:
     except Exception as e:
         print(f"[Warning] Interactive Map router could not be loaded: {e}")
 
-# Mount static directory for preview imagery & uploaded rasters
-static_dir = os.path.join(current_dir, "temp_uploads")
-os.makedirs(static_dir, exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
 # Mount output directory for ChangeFormer / Change Detective masks, rasters, and GeoJSON files
+# Note: Mounted BEFORE /static so /static does not shadow /static/outputs
 candidate_output_dirs = [
     current_dir / "outputs",
     current_dir.parents[2] / "Bi-Temporal ChangeFormer" / "SatqueryAI" / "backend" / "outputs",
@@ -64,12 +83,17 @@ for cand in candidate_output_dirs:
 os.makedirs(outputs_dir, exist_ok=True)
 app.mount("/static/outputs", StaticFiles(directory=str(outputs_dir)), name="outputs")
 
+# Mount static directory for preview imagery & uploaded rasters
+static_dir = os.path.join(current_dir, "temp_uploads")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.get("/")
 def root():
     lan_ip = get_lan_ip()
     return {
-        "service": "SatQuery AI Backend",
+        "service": "Diachron AI Backend",
         "status": "online",
         "local_url": f"http://localhost:{PORT}/api/v1",
         "documentation": f"http://localhost:{PORT}/docs",
@@ -119,11 +143,11 @@ def system_status():
             remote_status = f"offline or unreachable ({type(e).__name__})"
 
     return {
-        "service": "SatQuery AI",
+        "service": "Diachron AI",
         "status": "online",
         "execution_mode": "remote_gpu_api" if MODEL_SERVICE_URL else ("local_gpu_cuda" if gpu_available else "offline_fallback"),
         "model_engine": {
-            "model_name": "Qwen3-VL-2B-SatQuery (Multimodal S1/S2)",
+            "model_name": "Qwen3-VL-2B-Diachron (Multimodal S1/S2)",
             "model_checkpoint": "qwen3_vl_satquery_merged",
             "modalities_supported": ["Sentinel-1 SAR", "Sentinel-2 Optical", "Dual-Modal S1+S2"],
             "remote_service_url": MODEL_SERVICE_URL if MODEL_SERVICE_URL else None,
@@ -139,9 +163,11 @@ def system_status():
             "api_endpoint": f"http://localhost:{PORT}/api/v1/satquery",
         },
         "specialists": {
-            "tool_1_vqa": "ready (Qwen3-VL-2B-SatQuery Multimodal S1/S2)",
-            "tool_2_grounding": "ready (WGS84 GeoJSON polygon projection)",
-            "tool_3_change_detection": "ready (Bi-Temporal V2 Change Detective + ChangeFormerV6 + IR-MAD + CVA)",
+            "semantic_retrieval": "ready (RemoteCLIP Vision-Language Vector Search & Hybrid Ranking)",
+            "multi_temporal_change": "ready (ChangeFormerV6 + IR-MAD + CVA + Onset Date Pinpointing)",
+            "quality_false_alarm": "ready (SCL QA Masking + Radiometric Normalization)",
+            "discovery_clustering": "ready (Spherical K-Means + Spatial AOI Expansion)",
+            "analyst_provenance": "ready (Review Queue + RFC 7946 & W3C PROV Export)",
         },
     }
 
@@ -150,7 +176,7 @@ if __name__ == "__main__":
     import uvicorn
     lan_ip = get_lan_ip()
     print("\n" + "=" * 60)
-    print("SatQuery AI Central Backend Starting...")
+    print("Diachron AI Central Backend Starting...")
     print(f"Local Access:  http://localhost:{PORT}")
     print(f"LAN Access:    http://{lan_ip}:{PORT}  <-- Use this from other laptops")
     print(f"API Docs:      http://localhost:{PORT}/docs")

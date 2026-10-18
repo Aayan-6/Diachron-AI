@@ -32,3 +32,30 @@ class SatQueryResponse(BaseModel):
         default=None,
         description="Authoritative band capability contract for loaded imagery.",
     )
+
+    analysis_mode: Optional[str] = Field(
+        default=None,
+        description="'bi-temporal' or 'multi-temporal' or 'single'.",
+    )
+
+    timeline: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Chronological change observations per scene date.",
+    )
+
+    candidates: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Ranked change candidates with earliest observation and spectral change type.",
+    )
+
+    scene_overlay: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Full SceneOverlay payload (mode, bounds, scenes with image_urls) to auto-mount onto the MapLibre viewport.",
+    )
+
+    provenance: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured analytical provenance record (sensors, scene IDs, processing steps, algorithms, timestamps).",
+    )
+
+

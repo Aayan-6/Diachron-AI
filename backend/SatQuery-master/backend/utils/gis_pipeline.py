@@ -384,8 +384,14 @@ def align_geotiffs(file_paths: List[str]) -> List[str]:
     if len(file_paths) < 2:
         return file_paths
 
+    if len(file_paths) > 2:
+        # For multi-temporal series, change_service handles sub-pixel re-projection
+        # and grid normalization for each pair dynamically relative to T0.
+        return file_paths
+
     file_1 = file_paths[0]
     file_2 = file_paths[1]
+
 
     # If either is not a GeoTIFF, return as is
     if not (file_1.lower().endswith((".tif", ".tiff")) and file_2.lower().endswith((".tif", ".tiff"))):

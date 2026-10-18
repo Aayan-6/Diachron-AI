@@ -42,9 +42,9 @@ const pipelineStages = [
     title: 'Specialist AI Routing',
     tag: 'Inference',
     description:
-      'Dynamically dispatches task to Single-Image VQA, Visual Grounding Transformer, or Bi-Temporal Change Detection.',
+      'Dynamically routes tasks to Semantic Archive Retrieval, Multi-Temporal ChangeFormer V6, or False-Alarm Quality Suppression.',
     icon: <Cpu className="text-accent-cyan" size={24} />,
-    tech: 'Siam-NestedUNet / EVA-02',
+    tech: 'ChangeFormer V6 / RemoteCLIP',
   },
   {
     step: '05',
@@ -85,7 +85,7 @@ export const HowItWorks = () => {
             <span>Agentic Workflow Architecture</span>
           </div>
           <h2 className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight">
-            How SatQuery AI Operates
+            How Diachron AI Operates
           </h2>
           <p className="text-sm md:text-base text-slate-400 leading-relaxed">
             From raw multispectral & SAR rasters to mathematically verifiable intelligence — driven by an autonomous multi-agent pipeline.

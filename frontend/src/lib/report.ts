@@ -36,10 +36,10 @@ export function downloadGeoJsonReport(title: string, messages: ChatMessage[]) {
 
   const featureCollection = {
     type: 'FeatureCollection',
-    name: title || 'SatQuery Export',
+    name: title || 'Diachron Export',
     metadata: {
       generatedAt: new Date().toISOString(),
-      agent: 'SatQuery AI'
+      agent: 'Diachron AI'
     },
     features: allFeatures
   };
@@ -49,7 +49,7 @@ export function downloadGeoJsonReport(title: string, messages: ChatMessage[]) {
   const downloadAnchorNode = document.createElement('a');
   downloadAnchorNode.setAttribute("href", dataStr);
   
-  const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'satquery_export';
+  const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'diachron_export';
   downloadAnchorNode.setAttribute("download", `${safeTitle}.geojson`);
   
   document.body.appendChild(downloadAnchorNode); // required for firefox

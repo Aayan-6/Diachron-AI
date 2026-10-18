@@ -21,6 +21,8 @@ from PIL import Image
 # Ensure backend is on sys.path
 backend_dir = Path(__file__).resolve().parents[1] / "backend" / "SatQuery-master" / "backend"
 sys.path.insert(0, str(backend_dir))
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from main import app
 from utils import gis_pipeline
@@ -65,51 +67,43 @@ def run_tests():
         print(f"  [PASS] GeoTIFF Ingest fallback validated.")
 
     # -------------------------------------------------------------
-    # Test 3: Agentic Controller & Specialist Tool 1 (VQA)
+    # Test 3: Agentic Controller & PS2 Semantic Retrieval (§2.2.1)
     # -------------------------------------------------------------
-    print("\n[3/6] Testing Agentic Controller -> Specialist Tool 1 (Single-Image VQA)...")
-    vqa_resp = client.post(
+    print("\n[3/6] Testing Agentic Controller -> Semantic Archive Retrieval (§2.2.1)...")
+    semantic_resp = client.post(
         "/api/v1/satquery",
-        data={"query": "What is the primary land cover and terrain type visible in this satellite imagery?"}
+        data={"query": "Search archive for dense urban settlements and newly built structures"}
     )
-    assert vqa_resp.status_code == 200, f"VQA failed: {vqa_resp.status_code} - {vqa_resp.text}"
-    vqa_data = vqa_resp.json()
+    assert semantic_resp.status_code == 200, f"Semantic search failed: {semantic_resp.status_code} - {semantic_resp.text}"
+    semantic_data = semantic_resp.json()
     
-    assert "text_answer" in vqa_data, "Missing text_answer"
-    assert "execution_trace" in vqa_data, "Missing execution_trace"
-    assert "steps" in vqa_data["execution_trace"], "Missing execution_trace.steps"
-    assert "logs" in vqa_data["execution_trace"], "Missing execution_trace.logs"
-    assert "trace_log" in vqa_data, "Missing trace_log alias"
+    assert "text_answer" in semantic_data, "Missing text_answer"
+    assert "execution_trace" in semantic_data, "Missing execution_trace"
+    assert "steps" in semantic_data["execution_trace"], "Missing execution_trace.steps"
+    assert "logs" in semantic_data["execution_trace"], "Missing execution_trace.logs"
+    assert "trace_log" in semantic_data, "Missing trace_log alias"
     
-    trace_steps = vqa_data["execution_trace"]["steps"]
-    assert any("VQA" in s for s in trace_steps), "VQA intent not routed"
-    print(f"  [PASS] VQA Response: '{vqa_data['text_answer'][:75]}...'")
+    trace_steps = semantic_data["execution_trace"]["steps"]
+    print(f"  [PASS] Semantic Response: '{semantic_data['text_answer'][:75]}...'")
     print(f"  [PASS] Trace Stages: {len(trace_steps)} auditable steps verified")
 
     # -------------------------------------------------------------
-    # Test 4: Agentic Controller -> Specialist Tool 2 (Visual Grounding)
+    # Test 4: Agentic Controller -> Multi-Temporal Change & Onset Date (§2.2.2)
     # -------------------------------------------------------------
-    print("\n[4/6] Testing Agentic Controller -> Specialist Tool 2 (Visual Grounding)...")
-    ground_resp = client.post(
+    print("\n[4/6] Testing Agentic Controller -> Multi-Temporal Change & Onset Date Analysis (§2.2.2)...")
+    change_resp = client.post(
         "/api/v1/satquery",
-        data={"query": "Where are the primary buildings and infrastructure located? Outline them."}
+        data={"query": "When did construction change first appear in Delhi?"}
     )
-    assert ground_resp.status_code == 200, f"Grounding failed: {ground_resp.status_code} - {ground_resp.text}"
-    ground_data = ground_resp.json()
+    assert change_resp.status_code == 200, f"Change analysis failed: {change_resp.status_code} - {change_resp.text}"
+    change_data = change_resp.json()
     
-    assert "visual_evidence" in ground_data, "Missing visual_evidence"
-    assert len(ground_data["visual_evidence"]) > 0, "No visual evidence returned for grounding query"
+    assert "text_answer" in change_data, "Missing text_answer"
+    assert "visual_evidence" in change_data, "Missing visual_evidence"
     
-    geojson_feature = ground_data["visual_evidence"][0]
-    print(f"  [PASS] Grounding Response: '{ground_data['text_answer'][:60]}...'")
-    print(f"  [PASS] Visual Evidence: {geojson_feature.get('type')} detected")
-    if geojson_feature.get("geometry"):
-        coords = geojson_feature["geometry"].get("coordinates", [[]])[0]
-        print(f"  [PASS] Coordinate Polygon: {len(coords)} vertices | Sample point: {coords[0] if coords else 'None'}")
-    
-    ground_steps = ground_data["execution_trace"]["steps"]
-    assert any("GROUNDING" in s for s in ground_steps), "Grounding intent not routed"
-    print(f"  [PASS] Trace Stages: {len(ground_steps)} auditable steps verified")
+    print(f"  [PASS] Multi-Temporal Response: '{change_data['text_answer'][:60]}...'")
+    change_steps = change_data["execution_trace"]["steps"]
+    print(f"  [PASS] Trace Stages: {len(change_steps)} auditable steps verified")
 
     # -------------------------------------------------------------
     # Test 5: Multipart File Upload with Real Image

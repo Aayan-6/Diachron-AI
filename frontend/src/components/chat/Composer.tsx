@@ -166,8 +166,8 @@ export const Composer: React.FC = () => {
             }}
             placeholder={
               dataset
-                ? `Ask about ${dataset.name}…`
-                : 'Ask about satellite or SAR imagery — or attach a scene first'
+                ? `Analyze change, pinpoint onset date, or inspect features in ${dataset.name}…`
+                : 'Search archive by semantic description or analyze multi-temporal changes…'
             }
             className="scrollbar-slim max-h-[168px] min-h-[36px] flex-1 resize-none bg-transparent py-2 text-[14px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
           />

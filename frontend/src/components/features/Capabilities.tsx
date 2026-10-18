@@ -4,40 +4,40 @@ import { Eye, Target, Layers, Zap, ArrowUpRight } from 'lucide-react';
 
 const capabilities = [
   {
-    title: 'Single-Image VQA',
+    title: 'Semantic Archive Retrieval',
     description:
-      'Zero-shot visual question answering over optical and SAR scenes. Extracts terrain classification, structural density, and contextual attributes.',
-    icon: <Eye className="text-accent-cyan" size={24} />,
-    input: '1 GeoTIFF + Prompt',
-    output: 'Attribute Reasoning & Confidence',
-    features: ['Infrastructure Counting', 'Surface Water Classification', 'Disaster Severity'],
-  },
-  {
-    title: 'Visual Grounding',
-    description:
-      'Natural-language localization of target geometries. Identifies and delineates spatial entities with precise coordinate bounding boxes.',
+      'Open-vocabulary zero-shot text search and exemplar-based visual similarity across multi-temporal satellite archives.',
     icon: <Target className="text-accent-cyan" size={24} />,
-    input: 'GeoTIFF + Entity Description',
-    output: 'Polygon Bounding Box + IoU Score',
-    features: ['Industrial Storage Tank Detection', 'Runway Localization', 'Vessel Tracking'],
+    input: 'Natural Query / Exemplar AOI',
+    output: 'Ranked Locations + Similarity Metric',
+    features: ['Open-Vocabulary Search', 'Exemplar Image-to-Image', 'Hybrid Metadata Filters'],
   },
   {
-    title: 'Bi-Temporal Change Detection',
+    title: 'Multi-Temporal Change Detection',
     description:
-      'Differential neural analysis between multi-epoch image pairs. Quantifies urban sprawl, deforestation, and disaster damage over time.',
+      'ChangeFormer V6 transformer architecture coupled with IR-MAD to detect physical alterations, onset dates, and evolution trajectories.',
     icon: <Layers className="text-accent-cyan" size={24} />,
-    input: 'Pair (T1, T2 GeoTIFFs)',
-    output: 'Pixel-Level Binary Change Mask',
-    features: ['Hectare Growth Metric', 'Vegetation Loss Delta', 'New Construction Clustering'],
+    input: 'Multi-Epoch Scene Stacks',
+    output: 'Calibrated Vector Polygons + Onset Date',
+    features: ['Earliest Onset Date Pinpointing', 'Infrastructure Taxonomy', 'Trajectory Tracking'],
   },
   {
-    title: 'SAR + Optical Cross-Modal Fusion',
+    title: 'False-Alarm Quality Suppression',
     description:
-      'Combines optical spectral fidelity with SAR microwave all-weather penetration to pierce heavy clouds, haze, and night conditions.',
+      'Active mitigation of seasonal phenology, cast shadows, and thin cirrus using SCL cloud masks, radiometric normalization, and confidence calibration.',
     icon: <Zap className="text-accent-cyan" size={24} />,
-    input: 'Optical RGB + SAR VV/VH',
-    output: 'Unified Latent Representation',
-    features: ['Monsoon Flood Mapping', 'All-Weather Surface Tracking', 'Polarimetric Analysis'],
+    input: 'Scene Classification (SCL) + Bands',
+    output: 'High-Precision Verified Changes',
+    features: ['Phenology Decoupling', 'Illumination Normalization', 'Confidence Calibration'],
+  },
+  {
+    title: 'Analyst Triage & Provenance',
+    description:
+      'Ranked review queue with side-by-side evidence, human-in-the-loop triage, and full RFC 7946 GeoJSON and W3C PROV export.',
+    icon: <Eye className="text-accent-cyan" size={24} />,
+    input: 'Analyst Decisions (Accept / Reject)',
+    output: 'Verifiable Intelligence Dossier',
+    features: ['Side-by-Side Timeline Scrubber', 'Human-in-the-Loop Triage', 'W3C PROV Lineage'],
   },
 ];
 
