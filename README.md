@@ -1,64 +1,112 @@
-# SatQuery AI 🛰️
+# Diachron AI 🛰️ × TinyFish AI 🌐
 
-> **Multimodal Agentic Geospatial Intelligence & Remote Sensing Assistant**  
-> *Smart India Hackathon 2026 | ISRO Problem Statement 26167*
+> **Autonomous Multimodal Earth Observation & Spatio-Temporal Ground-Truth Intelligence Platform**  
+> *Fusing Bi-Temporal Satellite Vision with Autonomous AI Web Agents for Real-World Causal Verification*
 
 ---
 
 ## 🌟 Overview
 
-**SatQuery AI** is an end-to-end multimodal geospatial analysis platform designed to process, analyze, and query multi-sensor Earth observation data through natural language. Built for high-resolution satellite remote sensing, SatQuery combines cutting-edge Vision-Language Models (VLMs), bi-temporal transformer-based change detection, and automated GIS pipelines for Sentinel-1 (SAR) and Sentinel-2 (Optical) imagery.
+**Diachron AI** is an advanced multimodal geospatial analysis platform that bridges the gap between **Earth Observation (EO) satellite remote sensing** and **live real-world ground truth**. 
 
-### Key Capabilities
+Traditional satellite systems detect *that* a change occurred (e.g., 20 hectares of canopy loss or reservoir volume decline), but **cannot explain why**. Diachron AI pairs deep learning bi-temporal transformers with **TinyFish AI Web Agents** to autonomously investigate, corroborate, and attribute physical ground changes against live municipal gazettes, infrastructure tenders, and disaster bulletins.
 
-1. **Multimodal Satellite VQA & Reasoning**: Powered by a custom fine-tuned **Qwen3-VL-2B** remote-sensing specialist model capable of complex geospatial queries, object identification, and multi-spectral interpretation.
-2. **Bi-Temporal Change Detection**: Powered by **ChangeFormerV6**, detecting ground changes across dual-epoch satellite passes with pixel-level precision.
-3. **Automated GIS Extraction & Coregistration**: Automated pipeline for Sentinel-1 GRD and Sentinel-2 MSI data—performing radiometric calibration, reprojection to EPSG:4326 (WGS84), coregistration, and dynamic tiling.
-4. **Visual Grounding & Vectorization**: Converts model detections into standards-compliant WGS84 GeoJSON polygons with bounding boxes, area calculations, and confidence scores.
-5. **Real-time Map Console**: Interactive web application featuring MapLibre GL geospatial map layers, 3D globe visualization (Three.js), side-by-side swipe comparison, and telemetry tracking.
+```
+       SATELLITE INTELLIGENCE                       AUTONOMOUS WEB AGENT
+ ┌─────────────────────────────────┐         ┌─────────────────────────────────┐
+ │ Sentinel-1 SAR / Sentinel-2 MSI │         │  TinyFish Search & Fetch APIs   │
+ │   Qwen3-VL-2B Remote Sensing    │         │  Autonomous Chromium Agent Pool │
+ │    ChangeFormerV6 Attention     │         │   Municipal & Disaster Mining   │
+ └────────────────┬────────────────┘         └────────────────┬────────────────┘
+                  │                                           │
+                  │ [Spatial Change Mask]                     │ [Verified Ground Events]
+                  └─────────────────────┬─────────────────────┘
+                                        │
+                                        ▼
+                  ┌───────────────────────────────────────────┐
+                  │    CROSS-MODAL CAUSAL ATTRIBUTION ENGINE  │
+                  │  • Causality Confidence Score (0-100%)    │
+                  │  • Risk & Compliance Classification       │
+                  │  • Spatio-Temporal Event Chronology       │
+                  └─────────────────────┬─────────────────────┘
+                                        │
+                                        ▼
+                  ┌───────────────────────────────────────────┐
+                  │      MAPLIBRE CONSOLE & LIVE TERMINAL     │
+                  │  • Real-time SSE Agent Terminal Stream    │
+                  │  • Interactive MapLibre & 3D Globe        │
+                  │  • Clickable Corroborating Web Evidence   │
+                  └───────────────────────────────────────────┘
+```
 
 ---
 
-## 🏗️ Architecture & Monorepo Structure
+## ✨ Key Capabilities
+
+### 1. 🌐 Autonomous Ground-Truth Sentinel (TinyFish AI Integration)
+* **Spatial-Semantic Anchor Discovery:** Automatically converts change centroids $[lat, lon]$ into administrative boundaries (village, taluka, district, state) and infrastructure landmarks (highways, rivers, industrial corridors).
+* **Intent-Driven News & Gazette Mining (TinyFish Search):** Formulates targeted spatiotemporal queries tailored to the observed change phenomenon and acquisition dates ($T_1 \to T_2$).
+* **Deep Dynamic SPA Scraping (TinyFish Fetch):** Renders complex JavaScript single-page news outlets and government portals via warm Chromium instances to extract clean markdown articles.
+* **Cross-Modal Causal Attribution:** Evaluates temporal correlation and keyword semantics to classify events:
+  * `AUTHORIZED_INFRASTRUCTURE` (Planned highways, industrial corridors, tenders)
+  * `CLIMATIC_OR_DISASTER_EVENT` (Reservoir spillway discharges, flood alerts, wildfires)
+  * `SUSPECTED_UNAUTHORIZED_ACTIVITY` (Clearing without matching tender/clearance)
+* **Real-time SSE Terminal:** Streams the autonomous web agent's thoughts and actions directly to the frontend dock via Server-Sent Events.
+
+### 2. 🛰️ Deep Learning Satellite Vision & VQA
+* **Bi-Temporal Change Detection:** Powered by **ChangeFormerV6** to compute high-resolution change probability heatmaps, IR-MAD multi-spectral differencing, and vector masks.
+* **Visual Question Answering (VQA):** Fine-tuned **Qwen3-VL-2B** remote-sensing specialist model answering complex natural-language queries over multi-spectral bands.
+* **Automated GIS Coregistration:** End-to-end preprocessing pipeline for Sentinel-1 GRD and Sentinel-2 MSI data with radiometric calibration, reprojection to EPSG:4326, and dynamic tiling.
+
+### 3. 🗺️ Analyst Operations Console
+* **MapLibre GL & 3D Globe:** High-performance raster and vector overlays with side-by-side epoch swipe comparisons.
+* **Review Queue & Multi-Temporal Timeline:** Analyst triage workflow for flagging and validating multi-epoch change candidates.
+* **Automated Export & Audit:** Standards-compliant GeoJSON, GeoTIFF, and comprehensive analytical PDF reports.
+
+---
+
+## 🏗️ Monorepo Structure
 
 ```
-SatQuery/
-├── backend/
-│   └── SatQuery-master/
-│       └── backend/              # Central FastAPI Agentic Controller & API routes
-│           ├── api/              # REST endpoints (/api/v1/satquery, /status)
-│           ├── core/             # Application config and lifecycle
-│           ├── schemas/          # Pydantic request/response schemas
-│           ├── services/         # Agentic routing, VLM caller, ChangeFormer hook
-│           └── utils/            # GIS pre-processing and GeoJSON utilities
+Diachron-AI/
+├── hackathon_addons/                 # 🌐 TinyFish Autonomous Investigator Extension
+│   ├── api/
+│   │   └── tinyfish_routes.py        # Endpoints: /investigate, /stream-investigation, /health
+│   └── services/
+│       ├── tinyfish_client.py        # TinyFish Search, Fetch & Web Agent client
+│       ├── spatial_anchor.py         # Reverse geocoder & query synthesizer
+│       ├── causal_attribution.py     # Cross-modal attribution & confidence scoring
+│       └── ground_truth_sentinel.py  # Master orchestrator & SSE event generator
 │
-├── frontend/                     # React 19 + TypeScript + Vite Web Console
+├── backend/                          # ⚡ Central FastAPI Platform Backend
+│   └── SatQuery-master/backend/
+│       ├── api/                      # Routes: auth, interactive-map, archive, telemetry
+│       ├── core/                     # Agentic loop, query planner & system lifecycle
+│       ├── services/                 # Model client, change service, spectral indices
+│       └── main.py                   # Central server entry point (port 8000)
+│
+├── frontend/                         # 💻 React 19 + TypeScript + Vite Console
 │   ├── src/
-│   │   ├── components/           # MapLibre map, inspector, chat console, 3D globe
-│   │   ├── pages/                # Analysis console, dashboard, settings
-│   │   └── context/              # State management & WebSocket/HTTP services
+│   │   ├── components/
+│   │   │   ├── map/                  # MapLibre viewport & timeline slider
+│   │   │   ├── scene/                # SceneDock, inspector, and review queue
+│   │   │   └── tinyfish/             # GroundTruthSentinelPanel & Live Terminal
+│   │   ├── context/                  # AppState unified context
+│   │   └── lib/                      # tinyfishApi, interactiveMapApi, telemetry
 │   └── package.json
 │
-├── gis_extraction_logic/         # Remote Sensing Data Engine
-│   ├── scripts/                  # Sentinel-1 & Sentinel-2 export/pipeline scripts
-│   ├── src/                      # SAR calibration, coregistration, optical processing
-│   └── data/                     # Data tiers: raw/, interim/, processed/ (git-ignored)
+├── gis_extraction_logic/             # 🌍 Satellite Remote Sensing Engine
+│   ├── scripts/                      # S1 & S2 download and processing scripts
+│   └── src/                          # SAR calibration and optical normalization
 │
-├── Model Training/               # VLM Fine-Tuning & GPU Model Server
-│   ├── 01_get_annotations.py     # Annotation harvesting from BigEarthNet
-│   ├── 05_train_qwen3_vl.py      # Qwen3-VL LoRA fine-tuning script
-│   ├── run_gpu_host.py           # Dedicated remote/local GPU inference service
-│   ├── satquery_model.py         # PyTorch inference pipeline & memory optimization
-│   └── output/                   # Model checkpoints & LoRA weights (git-ignored)
+├── Model Training/                   # 🧠 VLM Training & GPU Server
+│   ├── satquery_model.py             # Qwen3-VL local PyTorch inference pipeline
+│   └── run_gpu_host.py               # Dedicated GPU server runner
 │
-├── Bi-Temporal ChangeFormer/     # Change Detection Module
-│   └── SatqueryAI/backend/       # ChangeFormerV6 inference service & wrappers
-│
-├── tests/                        # Full-stack end-to-end integration tests
-│   └── test_full_stack_verification.py
-│
-├── requirements.txt              # Unified Python dependencies (CUDA 12.8 compatible)
-└── .env.example                  # Environment configuration template
+├── Bi-Temporal ChangeFormer/         # 🔬 ChangeFormerV6 Inference Service
+├── requirements.txt                  # Python dependencies (TinyFish, PyTorch, FastAPI)
+├── run_local.bat                     # One-click Windows local full-stack launcher
+└── .env.example                      # Configuration template
 ```
 
 ---
@@ -66,49 +114,45 @@ SatQuery/
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
+- **Operating System:** Windows 10/11 or Linux
+- **Python:** Python 3.11+ (Python 3.13 recommended)
+- **Node.js:** Node.js 18+ & npm
+- **TinyFish API Key:** Obtain from [tinyfish.ai](https://tinyfish.ai)
 
-- **Operating System**: Windows 10/11 or Linux
-- **Python**: Python 3.10 to 3.13 (Python 3.13 recommended with CUDA 12.8 PyTorch)
-- **Node.js**: Node.js 18+ (LTS) & npm
-- **GPU (Optional but recommended)**: NVIDIA GPU with CUDA support for accelerated local VLM inference.
-
-### 2. Environment Setup
-
-Copy `.env.example` to `.env`:
-
+### 2. Environment Configuration
+Create a `.env` file in the repository root:
 ```bash
-# In repository root:
 cp .env.example .env
-
-# In backend/SatQuery-master/backend:
-cp backend/SatQuery-master/backend/.env.example backend/SatQuery-master/backend/.env
 ```
 
-Configuration parameters:
+Configure your `.env` variables:
 ```env
-# Set empty to run directly on the local GPU, or provide remote URL:
-MODEL_SERVICE_URL=
+# Central Backend Network Settings
 HOST=0.0.0.0
 PORT=8000
+
+# TinyFish Autonomous Web Agent Infrastructure
+TINYFISH_API_KEY=sk-tinyfish-your-api-key-here
+
+# Leave empty to run on local GPU:
+MODEL_SERVICE_URL=
 ```
 
-### 3. Python Dependencies
+### 3. Installation
 
-Create and activate a virtual environment, then install the unified requirements:
-
+**Python Dependencies:**
 ```bash
 python -m venv .venv
-# On Windows:
+# Windows:
 .venv\Scripts\activate
-# On Linux/macOS:
+# Linux/macOS:
 source .venv/bin/activate
 
-# Install dependencies (CUDA-enabled torch if using NVIDIA GPU):
 pip install -r requirements.txt
+pip install tinyfish python-dotenv
 ```
 
-### 4. Frontend Dependencies
-
+**Frontend Dependencies:**
 ```bash
 cd frontend
 npm install
@@ -117,52 +161,71 @@ cd ..
 
 ---
 
-## ⚡ Running the Platform
+## ⚡ Launching the Application
 
-Run services individually in dedicated terminals:
+### Option A: One-Click Launcher (Windows)
+Double-click `run_local.bat` or run:
+```powershell
+.\run_local.bat
+```
+This automatically boots:
+* **FastAPI Central Backend:** `http://localhost:8000` (API Docs: `http://localhost:8000/docs`)
+* **React Vite Console:** `http://localhost:5173/console`
+
+### Option B: Manual Execution
 
 ```bash
-# Terminal 1: Central FastAPI Backend
+# Terminal 1: Backend
 cd backend/SatQuery-master/backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Terminal 2: React Vite Frontend Console
+# Terminal 2: Frontend Console
 cd frontend
 npm run dev
-
-# Terminal 3 (Optional): Dedicated Local GPU Model Inference Host
-cd "Model Training"
-python run_gpu_host.py
 ```
 
 ---
 
-## 📦 Model Weights & Checkpoints
+## 📡 TinyFish API Endpoints
 
-Due to GitHub's file size policies (100 MB hard limit), model checkpoints and heavy datasets are not tracked in Git. 
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/v1/tinyfish/health` | Verifies TinyFish API key and active capabilities |
+| `POST` | `/api/v1/tinyfish/investigate` | Full autonomous multi-vector ground-truth investigation |
+| `GET` | `/api/v1/tinyfish/stream-investigation` | Real-time **Server-Sent Events (SSE)** streaming live agent terminal logs |
 
-To run offline inference, place trained model weights in their designated directories:
-
-1. **Qwen3-VL Merged / LoRA Weights**:
-   - Location: `Model Training/output/qwen3_vl_satquery_merged/`
-   - Files: `model-*.safetensors`, `config.json`, `tokenizer.json`
-2. **ChangeFormer V6 Checkpoint**:
-   - Location: `Bi-Temporal ChangeFormer/SatqueryAI/backend/external/ChangeFormer/checkpoints/`
-   - File: `changeformer_checkpoint.pth` (or `CD_ChangeFormerV6.pth`)
+**Sample Investigation Request:**
+```json
+POST /api/v1/tinyfish/investigate
+{
+  "lat": 18.922,
+  "lon": 72.834,
+  "change_type": "Water level decline",
+  "area_hectares": 24.5,
+  "t1_date": "2025-01-01",
+  "t2_date": "2025-08-01"
+}
+```
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the end-to-end integration test suite to verify FastAPI endpoints, GIS metadata extraction, CRS reprojection, and agentic tool routing:
+1. **Verify TinyFish End-to-End Pipeline:**
+   ```bash
+   python -c "import asyncio; from hackathon_addons.services.ground_truth_sentinel import ground_truth_sentinel; res = asyncio.run(ground_truth_sentinel.investigate_aoi(lat=18.922, lon=72.834, change_type='Water drop')); print('Status:', res['status'], '| Score:', res['attribution']['causality_score'])"
+   ```
 
-```bash
-python tests/test_full_stack_verification.py
-```
+2. **Verify Frontend Production Build:**
+   ```bash
+   cd frontend
+   npm run build
+   ```
 
 ---
 
-## 📄 License & Attribution
+## 📄 License & Acknowledgements
 
-- Developed for **Smart India Hackathon (SIH 2026)** — ISRO Problem Statement 26167.
-- External model architectures credit to their respective authors: [Qwen-VL Team](https://github.com/QwenLM/Qwen-VL) and [ChangeFormer](https://github.com/wgcban/ChangeFormer).
+* **TinyFish AI:** Powered by the [TinyFish AI Web Agent Infrastructure](https://tinyfish.ai).
+* **Model Architectures:** [ChangeFormer](https://github.com/wgcban/ChangeFormer) & [Qwen-VL Team](https://github.com/QwenLM/Qwen-VL).
+* **Earth Observation:** Copernicus Sentinel-1 and Sentinel-2 data courtesy of the European Space Agency (ESA) and ISRO.
